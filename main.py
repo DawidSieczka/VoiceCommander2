@@ -67,7 +67,14 @@ def main() -> int:
         log.info("config changed: mode=%s lang=%s correction=%s ptt=%s mic=%r",
                  cfg.mode, cfg.language, cfg.ai_correction, cfg.ptt_key, cfg.input_device)
 
-    tray = Tray(cfg, on_config_change, on_exit, ptt.set_key)
+    tray = Tray(cfg, on_config_change, on_exit, ptt.set_key,
+                corrector_status=lambda: corrector.status)
+
+    def on_ollama_change() -> None:
+        if tray:
+            tray.refresh_menu()
+
+    corrector.on_change = on_ollama_change
 
     def load_model() -> None:
         try:

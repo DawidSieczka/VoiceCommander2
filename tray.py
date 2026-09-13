@@ -33,11 +33,13 @@ def _make_icon(state: str) -> Image.Image:
 
 class Tray:
     def __init__(self, cfg: AppConfig, on_change: Callable[[], None], on_exit: Callable[[], None],
-                 set_ptt_key: Callable[[str], None]):
+                 set_ptt_key: Callable[[str], None],
+                 corrector_status: Callable[[], str] = lambda: "ok"):
         self.cfg = cfg
         self._on_change = on_change
         self._on_exit = on_exit
         self._set_ptt_key = set_ptt_key
+        self._corrector_status = corrector_status  # "ok" | "offline" | "no_model" | ...
         self._status_text = "loading model..."
         self._icon = pystray.Icon("VoiceCommander2", _make_icon("loading"),
                                   "VoiceCommander2", menu=self._menu())
@@ -57,10 +59,25 @@ class Tray:
         except Exception:
             pass
 
+    def refresh_menu(self) -> None:
+        """Re-render menu labels/enabled state without touching icon or status."""
+        try:
+            self._icon.update_menu()
+        except Exception:
+            pass
+
     def stop(self) -> None:
         self._icon.stop()
 
     # --- menu ---
+
+    def _ai_correction_label(self) -> str:
+        status = self._corrector_status()
+        if status in ("ok", "starting"):
+            return "AI correction"
+        reason = {"offline": "Ollama not running",
+                  "no_model": f"run: ollama pull {self.cfg.ollama_model}"}.get(status, "Ollama error")
+        return f"AI correction — {reason}"
 
     def _save(self) -> None:
         cfgmod.save(self.cfg)
@@ -130,7 +147,12 @@ class Tray:
                 pystray.MenuItem("Per sentence", set_attr("mode", "per_sentence"), checked=checked("mode", "per_sentence"), radio=True),
                 pystray.MenuItem("Realtime (no AI correction)", set_attr("mode", "realtime"), checked=checked("mode", "realtime"), radio=True),
             )),
-            pystray.MenuItem("AI correction", toggle("ai_correction"), checked=checked("ai_correction")),
+            # Grayed out (with the reason) while the correction backend is not
+            # usable; the checkbox state is preserved so correction resumes
+            # automatically when Ollama comes back.
+            pystray.MenuItem(lambda item: self._ai_correction_label(),
+                             toggle("ai_correction"), checked=checked("ai_correction"),
+                             enabled=lambda item: self._corrector_status() in ("ok", "starting")),
             pystray.MenuItem("Push-to-talk key", pystray.Menu(
                 pystray.MenuItem("F9 (default)", set_attr("ptt_key", "f9"), checked=checked("ptt_key", "f9"), radio=True),
                 pystray.MenuItem("Right Ctrl", set_attr("ptt_key", "right ctrl"), checked=checked("ptt_key", "right ctrl"), radio=True),

@@ -56,6 +56,8 @@ class Corrector:
     def __init__(self, cfg: AppConfig):
         self._cfg = cfg
         self.available = False
+        self.status = "starting"   # "ok" | "offline" | "no_model" | "error"
+        self.on_change: Optional[callable] = None  # tray hook: refresh menu on state flip
         self._stop = threading.Event()
 
     # --- warm-up / keep-warm ---
@@ -68,14 +70,22 @@ class Corrector:
 
     def _keepalive_loop(self) -> None:
         while not self._stop.is_set():
-            ok = self._warm_up()
-            if self.available != ok:
-                log.info("Ollama availability: %s", ok)
-            self.available = ok
-            # Retry fast while down; re-warm every 25 min while up.
-            self._stop.wait(60 if not ok else 1500)
+            ok, status = self._warm_up()
+            if (self.available, self.status) != (ok, status):
+                log.info("Ollama availability: %s (%s)", ok, status)
+                self.available, self.status = ok, status
+                if self.on_change:
+                    try:
+                        self.on_change()
+                    except Exception:
+                        log.exception("availability callback failed")
+            # Retry fast while down (so the tray un-grays soon after the user
+            # starts Ollama / pulls the model); re-warm every 25 min while up.
+            self._stop.wait(15 if not ok else 1500)
 
-    def _warm_up(self) -> bool:
+    def _warm_up(self) -> tuple[bool, str]:
+        """Probe the correction endpoint; distinguish 'server down' from
+        'server up but the configured model is not installed'."""
         try:
             r = requests.post(
                 f"{self._cfg.ollama_url}/api/chat",
@@ -89,9 +99,13 @@ class Corrector:
                 },
                 timeout=(2, 60),
             )
-            return r.status_code == 200
         except requests.RequestException:
-            return False
+            return False, "offline"
+        if r.status_code == 200:
+            return True, "ok"
+        if r.status_code == 404:
+            return False, "no_model"   # e.g. model never pulled: ollama pull <model>
+        return False, "error"
 
     # --- correction ---
 
