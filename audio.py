@@ -1,7 +1,11 @@
-"""Microphone capture. Stream is opened only while PTT is held (critique:
-an always-open stream lights the Win11 mic indicator and drains battery).
+"""Microphone capture.
 
-Emits 32 ms int16 mono frames at 16 kHz to a callback.
+The stream is kept open by default (cfg.mic_always_open=True, no first-words
+clipping; the Win11 mic indicator stays lit). With mic_always_open=False the
+stream opens on PTT press and ~150-200 ms of leading speech may be lost.
+
+Emits 32 ms int16 mono frames at 16 kHz to a callback. The callback consumer
+(pipeline) must only enqueue — all analysis happens on its audio-worker thread.
 """
 from __future__ import annotations
 

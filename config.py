@@ -56,9 +56,44 @@ class AppConfig:
     # Mode 2 backpressure: skip correction when queue deeper than this
     max_correction_backlog: int = 2
 
+    # Performance A/B toggles (tray > Performance (A/B)); OFF = legacy behavior.
+    perf_eager_stt: bool = False           # on_release: transcribe while PTT is held
+    perf_fast_injection: bool = False      # SendInput for short texts + adaptive clipboard wait
+    perf_pipelined_correction: bool = False  # per_sentence: overlap STT with correction
+    short_text_chars: int = 120            # fast injection: type directly at or below (> 0)
+    clipboard_wait_max_ms: int = 300       # fast injection: adaptive wait cap (50-1000)
+
     # Realtime (mode 1)
     realtime_interval_s: float = 1.2
     realtime_window_max_s: float = 12.0
+
+
+@dataclass(frozen=True)
+class PerfSnapshot:
+    """Immutable per-dictation settings, captured at PTT press.
+
+    A dictation in flight completes under the settings it started with (FR-003);
+    everything downstream reads this snapshot, never live cfg.
+    """
+    eager_stt: bool
+    fast_injection: bool
+    pipelined_correction: bool
+    short_text_chars: int
+    clipboard_wait_max_ms: int
+    mode: str
+    language: str
+
+    @staticmethod
+    def from_config(cfg: AppConfig) -> "PerfSnapshot":
+        return PerfSnapshot(
+            eager_stt=cfg.perf_eager_stt,
+            fast_injection=cfg.perf_fast_injection,
+            pipelined_correction=cfg.perf_pipelined_correction,
+            short_text_chars=max(1, cfg.short_text_chars),
+            clipboard_wait_max_ms=min(1000, max(50, cfg.clipboard_wait_max_ms)),
+            mode=cfg.mode,
+            language=cfg.language,
+        )
 
 
 def load() -> AppConfig:

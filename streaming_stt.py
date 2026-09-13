@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from typing import Optional
 
 import numpy as np
 
@@ -20,6 +21,7 @@ from audio import SAMPLE_RATE
 from config import AppConfig
 from injector import Injector
 from stt import Transcriber
+from timing import DictationTiming
 
 log = logging.getLogger("streaming")
 
@@ -35,13 +37,15 @@ class StreamingWorker:
         self._committed: list[str] = []
         self._prev_hyp: list[str] = []
         self._thread: threading.Thread | None = None
+        self._timing: Optional[DictationTiming] = None
 
-    def start_utterance(self) -> None:
+    def start_utterance(self, timing: Optional[DictationTiming] = None) -> None:
         with self._lock:
             self._buf = np.zeros(0, dtype=np.int16)
             self._committed = []
             self._prev_hyp = []
             self._active = True
+            self._timing = timing
         self._thread = threading.Thread(target=self._loop, name="streaming", daemon=True)
         self._thread.start()
 
@@ -50,12 +54,20 @@ class StreamingWorker:
             if self._active:
                 self._buf = np.concatenate([self._buf, frame])
 
-    def end_utterance(self) -> None:
+    def end_utterance(self) -> int:
+        """Blocks until the final pass typed the tail; returns committed words."""
         with self._lock:
             self._active = False
         if self._thread:
             self._thread.join(timeout=30)
             self._thread = None
+        return len(self._committed)
+
+    def _type(self, words: list[str]) -> None:
+        t0 = time.perf_counter()
+        self._inj.type_text(" ".join(words) + " ")
+        if self._timing:
+            self._timing.add_injection(time.perf_counter() - t0)
 
     def _loop(self) -> None:
         interval = self._cfg.realtime_interval_s
@@ -71,7 +83,10 @@ class StreamingWorker:
 
             t0 = time.perf_counter()
             words = self._stt.transcribe(audio).split()
-            rtf = (time.perf_counter() - t0) / (len(audio) / SAMPLE_RATE)
+            dt = time.perf_counter() - t0
+            if self._timing:
+                self._timing.add_stt(dt)
+            rtf = dt / (len(audio) / SAMPLE_RATE)
             if rtf > 1.0:
                 log.warning("streaming pass RTF %.2f > 1 — consider stt_model=base for realtime", rtf)
 
@@ -79,7 +94,7 @@ class StreamingWorker:
                 # Final pass: type everything not yet committed, then stop.
                 tail = words[len(self._committed):]
                 if tail:
-                    self._inj.type_text(" ".join(tail) + " ")
+                    self._type(tail)
                     self._committed.extend(tail)
                 break
 
@@ -93,7 +108,7 @@ class StreamingWorker:
             self._prev_hyp = words
             new = words[len(self._committed):agree]
             if new:
-                self._inj.type_text(" ".join(new) + " ")
+                self._type(new)
                 self._committed.extend(new)
 
             # Trim the window when it grows past the cap: drop already-committed

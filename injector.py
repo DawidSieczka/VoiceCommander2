@@ -16,6 +16,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -132,6 +133,142 @@ def _release_held_modifiers() -> list[int]:
 CF_EXCLUDE_HISTORY = "ExcludeClipboardContentFromMonitorProcessing"
 CF_CAN_INCLUDE_HISTORY = "CanIncludeInClipboardHistory"
 
+# --- delayed-render clipboard (fast-injection path) ---
+#
+# WM_RENDERFORMAT is the only Windows signal that positively says "the paste
+# actually read our data" (sequence numbers change on writes, not reads), so the
+# post-paste wait can adapt instead of sleeping a fixed worst case. The owner
+# window is per-thread (a Win32 window is bound to its creator's message queue,
+# and injection may run on the pipeline thread or the inject-worker thread).
+
+WM_RENDERFORMAT = 0x0305
+WM_RENDERALLFORMATS = 0x0306
+GMEM_MOVEABLE = 0x0002
+HWND_MESSAGE = wt.HWND(-3)
+WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wt.HWND, ctypes.c_uint, wt.WPARAM, wt.LPARAM)
+
+user32.DefWindowProcW.restype = ctypes.c_ssize_t
+user32.DefWindowProcW.argtypes = [wt.HWND, ctypes.c_uint, wt.WPARAM, wt.LPARAM]
+
+
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [("style", ctypes.c_uint), ("lpfnWndProc", WNDPROC),
+                ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wt.HINSTANCE), ("hIcon", wt.HICON),
+                ("hCursor", ctypes.c_void_p), ("hbrBackground", wt.HBRUSH),
+                ("lpszMenuName", wt.LPCWSTR), ("lpszClassName", wt.LPCWSTR)]
+
+
+def _global_handle(data: bytes) -> Optional[int]:
+    h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+    if not h:
+        return None
+    p = kernel32.GlobalLock(h)
+    if not p:
+        kernel32.GlobalFree(h)
+        return None
+    ctypes.memmove(p, data, len(data))
+    kernel32.GlobalUnlock(h)
+    return h
+
+
+class _ClipOwnerWindow:
+    """Hidden message-only window that owns delayed-rendered clipboard text."""
+
+    def __init__(self):
+        self.text = ""
+        self.rendered_at: Optional[float] = None
+        self._wndproc = WNDPROC(self._wnd_proc)  # keep alive: Windows holds a raw pointer
+        cls_name = f"VC2ClipOwner_{threading.get_ident()}"
+        wc = WNDCLASSW(lpfnWndProc=self._wndproc, lpszClassName=cls_name,
+                       hInstance=kernel32.GetModuleHandleW(None))
+        if not user32.RegisterClassW(ctypes.byref(wc)):
+            raise ctypes.WinError()
+        self.hwnd = user32.CreateWindowExW(0, cls_name, None, 0, 0, 0, 0, 0,
+                                           HWND_MESSAGE, None, wc.hInstance, None)
+        if not self.hwnd:
+            raise ctypes.WinError()
+
+    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        try:
+            if msg == WM_RENDERFORMAT:
+                self._render()
+                return 0
+            if msg == WM_RENDERALLFORMATS:
+                # Per API contract this handler must open/verify/close itself.
+                if user32.OpenClipboard(hwnd):
+                    try:
+                        if user32.GetClipboardOwner() == hwnd:
+                            self._render()
+                    finally:
+                        user32.CloseClipboard()
+                return 0
+        except Exception:
+            log.exception("clipboard render failed")
+        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def _render(self) -> None:
+        h = _global_handle(self.text.encode("utf-16-le") + b"\x00\x00")
+        if h is not None and not user32.SetClipboardData(win32con.CF_UNICODETEXT, h):
+            kernel32.GlobalFree(h)
+            return
+        self.rendered_at = time.monotonic()
+
+    def set_delayed(self, text: str) -> bool:
+        """Put a delayed-render CF_UNICODETEXT promise (+ history-exclusion
+        formats) on the clipboard. Returns False if the clipboard is busy."""
+        self.text = text
+        self.rendered_at = None
+        for _ in range(10):
+            if user32.OpenClipboard(self.hwnd):
+                break
+            time.sleep(0.03)
+        else:
+            return False
+        try:
+            user32.EmptyClipboard()
+            if not user32.SetClipboardData(win32con.CF_UNICODETEXT, None):
+                return False
+            # Keep dictated text out of Win+V history / cloud sync (constitution I).
+            for name, value in ((CF_EXCLUDE_HISTORY, "1"), (CF_CAN_INCLUDE_HISTORY, "0")):
+                fmt = user32.RegisterClipboardFormatW(name)
+                h = _global_handle(value.encode("utf-16-le") + b"\x00\x00")
+                if fmt and h is not None and not user32.SetClipboardData(fmt, h):
+                    kernel32.GlobalFree(h)
+            return True
+        finally:
+            user32.CloseClipboard()
+
+    def pump_until_rendered(self, cap_ms: int) -> bool:
+        """Dispatch messages for this thread until the paste consumed our data
+        (WM_RENDERFORMAT handled) or the cap elapses."""
+        msg = wt.MSG()
+        deadline = time.monotonic() + cap_ms / 1000.0
+        while True:
+            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):  # PM_REMOVE
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            if self.rendered_at is not None:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.005)
+
+
+_tls = threading.local()
+
+
+def _clip_owner() -> Optional[_ClipOwnerWindow]:
+    win = getattr(_tls, "clip_owner", None)
+    if win is None:
+        try:
+            win = _ClipOwnerWindow()
+        except Exception:
+            log.exception("failed to create clipboard owner window")
+            win = False  # sentinel: do not retry every injection
+        _tls.clip_owner = win
+    return win or None
+
 
 def _open_clipboard(retries: int = 10) -> bool:
     for _ in range(retries):
@@ -182,25 +319,38 @@ class Injector:
     def __init__(self, method: str = "clipboard"):
         self.method = method
         self._warned_clipboard = False
+        self._warned_delayed_render = False
 
-    def inject(self, text: str, target_hwnd: Optional[int] = None) -> bool:
+    def inject(self, text: str, target_hwnd: Optional[int] = None, *,
+               fast: bool = False, short_chars: int = 120,
+               wait_max_ms: int = 300) -> tuple[bool, Optional[str]]:
         """Inject text at the caret of the focused window.
 
         target_hwnd: window captured at PTT release; if focus moved elsewhere
         since, injection is refused (focus-drift guard).
+        fast: A/B fast-injection toggle — short texts are typed directly and
+        the clipboard wait adapts to actual paste consumption.
+
+        Returns (ok, refusal_reason); reason is "refused_focus" or
+        "refused_password" when refused, None otherwise.
         """
         if not text:
-            return True
+            return True, None
         if target_hwnd is not None and focused_window() != target_hwnd:
             log.warning("focus changed during processing — injection refused")
-            return False
+            return False, "refused_focus"
         if _is_password_field():
             log.warning("focused control looks like a password field — injection refused")
-            return False
+            return False, "refused_password"
 
+        if fast and len(text) <= short_chars:
+            log.debug("fast injection: typing %d chars directly (no clipboard)", len(text))
+            return self._inject_unicode(text), None
         if self.method == "clipboard":
-            return self._inject_clipboard(text)
-        return self._inject_unicode(text)
+            if fast:
+                return self._inject_clipboard_fast(text, wait_max_ms), None
+            return self._inject_clipboard(text), None
+        return self._inject_unicode(text), None
 
     def type_text(self, text: str) -> None:
         """Streaming path (mode 1): unconditional Unicode typing, no clipboard."""
@@ -234,6 +384,49 @@ class Injector:
         elif kind == "other" and not self._warned_clipboard:
             self._warned_clipboard = True
             log.warning("clipboard held non-text data; it was not restored (one-time warning)")
+        return True
+
+    def _inject_clipboard_fast(self, text: str, wait_max_ms: int) -> bool:
+        """Clipboard paste with an adaptive post-paste wait (delayed rendering).
+
+        Never slower than the legacy fixed wait: the pump is capped at
+        wait_max_ms and falls back to the legacy path if the owner window or
+        the delayed promise cannot be set up (research R5 contingency).
+        """
+        win = _clip_owner()
+        if win is None:
+            if not self._warned_delayed_render:
+                self._warned_delayed_render = True
+                log.warning("delayed-render unavailable — using legacy clipboard wait (one-time warning)")
+            return self._inject_clipboard(text)
+
+        kind, saved = _snapshot_clipboard()
+        if not win.set_delayed(text):
+            log.warning("clipboard busy — falling back to Unicode typing")
+            return self._inject_unicode(text)
+
+        _release_held_modifiers()
+        t0 = time.monotonic()
+        _send_inputs([_key_event(VK_CONTROL, False), _key_event(VK_V, False),
+                      _key_event(VK_V, True), _key_event(VK_CONTROL, True)])
+
+        if win.pump_until_rendered(wait_max_ms):
+            time.sleep(0.03)  # grace: let the target finish its paste handler
+            log.debug("paste consumed after %d ms", int((win.rendered_at - t0) * 1000))
+        else:
+            log.info("paste not observed within %d ms cap — restoring clipboard anyway", wait_max_ms)
+
+        if kind == "text" and saved is not None:
+            if not _set_clipboard_text_plain(saved):
+                log.warning("failed to restore clipboard text")
+        else:
+            # Nothing to restore: materialize the promise into real text so no
+            # unrendered delayed handle lingers on a window nobody pumps anymore
+            # (end state identical to the legacy path: dictated text stays).
+            _set_clipboard_text(text)
+            if kind == "other" and not self._warned_clipboard:
+                self._warned_clipboard = True
+                log.warning("clipboard held non-text data; it was not restored (one-time warning)")
         return True
 
 

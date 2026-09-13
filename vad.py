@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -12,6 +13,31 @@ from audio import FRAME_SAMPLES, SAMPLE_RATE
 from config import AppConfig
 
 log = logging.getLogger("vad")
+
+# Persistent detector for has_speech(): ONNX session construction per dictation
+# was pure overhead (FR-014). Never shared with a Segmenter's instance — that one
+# holds live streaming state.
+_shared_vad: Optional[SileroVoiceActivityDetector] = None
+_shared_lock = threading.Lock()
+
+
+def _reset_detector(vad: SileroVoiceActivityDetector) -> None:
+    """Clear LSTM state between independent scans (T003: pysilero-vad exposes
+    reset(); fall back to no-op if a future version renames it — state carryover
+    only biases the first few frames)."""
+    reset = getattr(vad, "reset", None)
+    if callable(reset):
+        reset()
+
+
+def init_shared() -> None:
+    """Build the persistent has_speech detector; call once at startup so the
+    cost is not paid on the first dictation."""
+    global _shared_vad
+    with _shared_lock:
+        if _shared_vad is None:
+            _shared_vad = SileroVoiceActivityDetector()
+            log.info("persistent VAD ready")
 
 FRAME_MS = FRAME_SAMPLES * 1000 // SAMPLE_RATE  # 32
 
@@ -42,6 +68,12 @@ class Segmenter:
         self._speech_ms = 0
         self._buffer: list[np.ndarray] = []
         self._preroll: list[np.ndarray] = []  # padding before speech start
+
+    def reset(self) -> None:
+        """Drop any pending state at utterance start (guards against leftovers
+        from an aborted previous utterance)."""
+        self._reset()
+        _reset_detector(self._vad)
 
     def feed(self, frame: np.ndarray) -> None:
         cfg = self._cfg
@@ -89,12 +121,18 @@ class Segmenter:
 
 def has_speech(audio: np.ndarray, min_speech_ms: int = 300) -> bool:
     """Standalone check for mode on_release: don't transcribe pure silence
-    (Whisper hallucinates on it — v1 lesson)."""
-    vad = SileroVoiceActivityDetector()
-    speech_ms = 0
-    for i in range(0, len(audio) - FRAME_SAMPLES + 1, FRAME_SAMPLES):
-        if vad(audio[i:i + FRAME_SAMPLES].tobytes()) >= 0.5:
-            speech_ms += FRAME_MS
-            if speech_ms >= min_speech_ms:
-                return True
-    return False
+    (Whisper hallucinates on it — v1 lesson). Reuses the persistent detector."""
+    global _shared_vad
+    with _shared_lock:
+        if _shared_vad is None:
+            _shared_vad = SileroVoiceActivityDetector()
+            log.info("persistent VAD ready")
+        vad = _shared_vad
+        _reset_detector(vad)
+        speech_ms = 0
+        for i in range(0, len(audio) - FRAME_SAMPLES + 1, FRAME_SAMPLES):
+            if vad(audio[i:i + FRAME_SAMPLES].tobytes()) >= 0.5:
+                speech_ms += FRAME_MS
+                if speech_ms >= min_speech_ms:
+                    return True
+        return False

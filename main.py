@@ -71,6 +71,8 @@ def main() -> int:
 
     def load_model() -> None:
         try:
+            import vad
+            vad.init_shared()  # pay the has_speech detector cost at startup, not on first dictation
             transcriber.load()
             on_status("idle")
         except Exception:

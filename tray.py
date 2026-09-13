@@ -143,6 +143,11 @@ class Tray:
                 pystray.MenuItem("Medium — balanced (GPU)", set_attr("stt_model", "medium"), checked=checked("stt_model", "medium"), radio=True),
                 pystray.MenuItem("Large-v3-turbo — most accurate, slow (CPU)", set_attr("stt_model", "large-v3-turbo"), checked=checked("stt_model", "large-v3-turbo"), radio=True),
             )),
+            pystray.MenuItem("Performance (A/B)", pystray.Menu(
+                pystray.MenuItem("Eager transcription (on-release mode)", toggle("perf_eager_stt"), checked=checked("perf_eager_stt")),
+                pystray.MenuItem("Fast injection", toggle("perf_fast_injection"), checked=checked("perf_fast_injection")),
+                pystray.MenuItem("Overlapped correction (per-sentence)", toggle("perf_pipelined_correction"), checked=checked("perf_pipelined_correction")),
+            )),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Paused", toggle("paused"), checked=checked("paused")),
             pystray.MenuItem("Start with Windows", toggle_autostart, checked=lambda item: autostart.is_enabled()),
