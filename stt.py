@@ -39,14 +39,20 @@ class Transcriber:
         self._model = None
         self._blocklists: dict[str, list[str]] = {}
         self.loaded_model_name: Optional[str] = None
+        self._loaded_key: Optional[tuple] = None   # (model, device, compute) as REQUESTED
         self._loading = False
 
+    def _cfg_key(self) -> tuple:
+        return (self._cfg.stt_model, self._cfg.stt_device, self._cfg.stt_compute_type)
+
     def reload_if_changed(self) -> None:
-        """Swap the model in the background when cfg.stt_model changed (tray switch).
-        The old model keeps serving until the new one is ready."""
+        """Swap the model in the background when the model OR device/compute
+        changed (tray switch). The old model keeps serving until the new one is
+        ready. Compares the REQUESTED config, not the active device, so a
+        CUDA->CPU fallback does not retry on every unrelated config save."""
         import threading
 
-        if self._loading or self.loaded_model_name == self._cfg.stt_model:
+        if self._loading or self._loaded_key == self._cfg_key():
             return
         self._loading = True
 
@@ -102,6 +108,7 @@ class Transcriber:
         self._loading = True
         try:
             t0 = time.perf_counter()
+            requested_key = self._cfg_key()
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
             device, compute = self._cfg.stt_device, self._cfg.stt_compute_type
             if device == "cuda":
@@ -123,6 +130,7 @@ class Transcriber:
             self._model = model
             self.active_device = device
             self.loaded_model_name = self._cfg.stt_model
+            self._loaded_key = requested_key
             log.info("model %s (%s/%s) loaded+warmed in %.1f s",
                      self._cfg.stt_model, device, compute, time.perf_counter() - t0)
         finally:

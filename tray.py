@@ -84,6 +84,15 @@ class Tray:
         self._on_change()
         self._icon.update_menu()
 
+    def _set_stt_device(self, device: str, compute: str):
+        """Device and compute type switch together (CUDA falls back to CPU int8
+        automatically if the GPU/driver/CUDA libs are unusable — see stt.load)."""
+        def do(icon, item):
+            self.cfg.stt_device = device
+            self.cfg.stt_compute_type = compute
+            self._save()
+        return do
+
     def _mic_items(self):
         """Dynamic submenu: system default + currently present input devices."""
         from audio import list_input_devices
@@ -164,6 +173,12 @@ class Tray:
                 pystray.MenuItem("Small — fastest, least accurate", set_attr("stt_model", "small"), checked=checked("stt_model", "small"), radio=True),
                 pystray.MenuItem("Medium — balanced (GPU)", set_attr("stt_model", "medium"), checked=checked("stt_model", "medium"), radio=True),
                 pystray.MenuItem("Large-v3-turbo — most accurate, slow (CPU)", set_attr("stt_model", "large-v3-turbo"), checked=checked("stt_model", "large-v3-turbo"), radio=True),
+            )),
+            pystray.MenuItem("STT device", pystray.Menu(
+                pystray.MenuItem("CPU (int8)", self._set_stt_device("cpu", "int8"),
+                                 checked=checked("stt_device", "cpu"), radio=True),
+                pystray.MenuItem("GPU — CUDA (int8_float16)", self._set_stt_device("cuda", "int8_float16"),
+                                 checked=checked("stt_device", "cuda"), radio=True),
             )),
             pystray.MenuItem("Performance (A/B)", pystray.Menu(
                 pystray.MenuItem("Eager transcription (on-release mode)", toggle("perf_eager_stt"), checked=checked("perf_eager_stt")),
