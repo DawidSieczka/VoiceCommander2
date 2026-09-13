@@ -1,0 +1,9 @@
+faster-whisper
+sounddevice
+numpy
+pysilero-vad
+keyboard
+pystray
+Pillow
+pywin32
+requests
