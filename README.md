@@ -23,6 +23,8 @@ Ikona mikrofonu pojawi się w zasobniku (prawy dolny róg, może być schowana p
 
 Prawy przycisk myszy na ikonie → ustawienia: język (Polish/English), tryb (On release / Per sentence / Realtime), korekta AI, klawisz PTT, pauza, autostart, dostęp do configu i logów.
 
+**Performance (A/B)** — trzy przełączniki usprawnień latencji (Eager transcription, Fast injection, Overlapped correction), domyślnie wyłączone. Działają od następnego dyktatu, bez restartu. Każdy dyktat zapisuje w logu linię `DICTATION … total_ms=…` z rozbiciem czasów i stanem przełączników — dyktując to samo z przełącznikiem OFF i ON porównasz realny zysk na swoim sprzęcie.
+
 ## Pierwsze uruchomienie
 
 Model Whisper `small` (~460 MB) pobiera się automatycznie do `%LOCALAPPDATA%\VoiceCommander2\models` — to jedyny (jednorazowy) kontakt z internetem. Status „loading model…" znika po załadowaniu.

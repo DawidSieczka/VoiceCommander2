@@ -69,6 +69,10 @@ Mode                ▸  (•) On release  ( ) Per sentence  ( ) Realtime
 AI correction          [x]
 Push-to-talk key    ▸  (•) Right Ctrl  ( ) F9  ( ) Scroll Lock
 ─────────────────────────
+Performance (A/B)   ▸  [ ] Eager transcription (on-release mode)
+                       [ ] Fast injection
+                       [ ] Overlapped correction (per-sentence)
+─────────────────────────
 Paused                 [ ]
 Start with Windows     [ ]
 Open config file
@@ -78,6 +82,24 @@ Exit
 ```
 
 Ustawienia zapisywane w `%APPDATA%\VoiceCommander2\config.json` (zapis atomowy). Autostart przez klucz rejestru `HKCU\...\Run`. Zabezpieczenie przed drugą instancją (mutex).
+
+### 2.7 Przełączniki Performance (A/B)
+
+Trzy niezależne usprawnienia latencji, domyślnie **wyłączone** (zachowanie legacy). Przełączenie działa od **następnego** dyktatu, bez restartu; dyktat w toku kończy się na ustawieniach z chwili wciśnięcia PTT (snapshot).
+
+| Przełącznik | Klucz configu | Działanie |
+|---|---|---|
+| Eager transcription | `perf_eager_stt` | Tryb On release: segmentacja (VAD) i transkrypcja biegną **w trakcie trzymania** klawisza; po puszczeniu dogrywany jest tylko ogon, potem jedna korekta + jedno wstrzyknięcie. Tekst wynikowy identyczny, czekanie krótsze |
+| Fast injection | `perf_fast_injection` | Teksty ≤ `short_text_chars` (domyślnie 120) wpisywane przez SendInput (schowek nietknięty); dłuższe — schowek z **adaptacyjnym** czekaniem: delayed rendering + `WM_RENDERFORMAT` sygnalizuje faktyczne odczytanie wklejki, limit `clipboard_wait_max_ms` (domyślnie 300, jak stały sleep legacy) |
+| Overlapped correction | `perf_pipelined_correction` | Tryb Per sentence: STT zdania N+1 równolegle z korektą Ollama zdania N; wstrzykiwanie zawsze w kolejności wypowiedzi (pojedynczy worker FIFO) |
+
+Każdy dyktat kończy się jedną linią w logu (logger `timing`):
+
+```
+DICTATION mode=on_release outcome=injected total_ms=1840 stt_ms=1210 eager_stt_ms=6480 corr_ms=520 inject_ms=95 eager=1 fastinj=1 overlap=0
+```
+
+`total_ms` = od puszczenia klawisza do zakończenia; `eager_stt_ms` = praca STT wykonana jeszcze w trakcie trzymania. Porównanie A/B: wykonaj dyktat, przełącz, powtórz, porównaj dwie linie (`Select-String DICTATION`). Progi `short_text_chars` i `clipboard_wait_max_ms` tylko w pliku config.
 
 ---
 
