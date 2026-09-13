@@ -333,9 +333,10 @@ class Pipeline:
             return
 
         utt, seg, snap = item.utt, item.segment, item.utt.snapshot
+        held = utt.timing.released_at is None   # classify by start, not finish
         t0 = time.perf_counter()
         text = self._stt.transcribe(seg.audio)
-        utt.timing.add_stt(time.perf_counter() - t0)
+        utt.timing.add_stt(time.perf_counter() - t0, held=held)
 
         if snap.mode == "on_release" and snap.eager_stt:
             if text:

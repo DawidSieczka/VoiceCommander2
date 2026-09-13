@@ -97,30 +97,36 @@ class Transcriber:
     def load(self) -> None:
         import numpy as _np
 
-        t0 = time.perf_counter()
-        MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        device, compute = self._cfg.stt_device, self._cfg.stt_compute_type
-        if device == "cuda":
-            self._add_cuda_dll_dirs()
+        # Guards reload_if_changed(): a tray click during the initial ~40 s load
+        # must not spawn a second concurrent load of the same model.
+        self._loading = True
         try:
-            model = self._build(device, compute)
-            # Warm-up inference: catches CUDA OOM/driver failures at load time
-            # instead of losing the user's first utterance (v1 lesson: never
-            # trust a GPU model until it actually ran).
-            list(model.transcribe(_np.zeros(8000, dtype=_np.float32),
-                                  language=self._cfg.language, beam_size=1)[0])
-        except Exception:
+            t0 = time.perf_counter()
+            MODELS_DIR.mkdir(parents=True, exist_ok=True)
+            device, compute = self._cfg.stt_device, self._cfg.stt_compute_type
             if device == "cuda":
-                log.exception("CUDA load/warm-up failed — falling back to CPU int8")
-                device, compute = "cpu", "int8"
+                self._add_cuda_dll_dirs()
+            try:
                 model = self._build(device, compute)
-            else:
-                raise
-        self._model = model
-        self.active_device = device
-        self.loaded_model_name = self._cfg.stt_model
-        log.info("model %s (%s/%s) loaded+warmed in %.1f s",
-                 self._cfg.stt_model, device, compute, time.perf_counter() - t0)
+                # Warm-up inference: catches CUDA OOM/driver failures at load time
+                # instead of losing the user's first utterance (v1 lesson: never
+                # trust a GPU model until it actually ran).
+                list(model.transcribe(_np.zeros(8000, dtype=_np.float32),
+                                      language=self._cfg.language, beam_size=1)[0])
+            except Exception:
+                if device == "cuda":
+                    log.exception("CUDA load/warm-up failed — falling back to CPU int8")
+                    device, compute = "cpu", "int8"
+                    model = self._build(device, compute)
+                else:
+                    raise
+            self._model = model
+            self.active_device = device
+            self.loaded_model_name = self._cfg.stt_model
+            log.info("model %s (%s/%s) loaded+warmed in %.1f s",
+                     self._cfg.stt_model, device, compute, time.perf_counter() - t0)
+        finally:
+            self._loading = False
 
     @property
     def ready(self) -> bool:

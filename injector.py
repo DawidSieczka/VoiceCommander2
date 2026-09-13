@@ -159,6 +159,43 @@ class WNDCLASSW(ctypes.Structure):
                 ("lpszMenuName", wt.LPCWSTR), ("lpszClassName", wt.LPCWSTR)]
 
 
+# Explicit signatures for every handle-returning/handle-taking API used on this
+# path: ctypes defaults to 32-bit c_int, which silently TRUNCATES 64-bit
+# handles (GlobalAlloc/GlobalLock/CreateWindowExW/...) on 64-bit Python.
+kernel32.GlobalAlloc.restype = wt.HGLOBAL
+kernel32.GlobalAlloc.argtypes = [wt.UINT, ctypes.c_size_t]
+kernel32.GlobalLock.restype = wt.LPVOID
+kernel32.GlobalLock.argtypes = [wt.HGLOBAL]
+kernel32.GlobalUnlock.restype = wt.BOOL
+kernel32.GlobalUnlock.argtypes = [wt.HGLOBAL]
+kernel32.GlobalFree.restype = wt.HGLOBAL
+kernel32.GlobalFree.argtypes = [wt.HGLOBAL]
+kernel32.GetModuleHandleW.restype = wt.HMODULE
+kernel32.GetModuleHandleW.argtypes = [wt.LPCWSTR]
+kernel32.SetLastError.argtypes = [wt.DWORD]
+user32.SetClipboardData.restype = wt.HANDLE
+user32.SetClipboardData.argtypes = [wt.UINT, wt.HANDLE]
+user32.OpenClipboard.restype = wt.BOOL
+user32.OpenClipboard.argtypes = [wt.HWND]
+user32.EmptyClipboard.restype = wt.BOOL
+user32.GetClipboardOwner.restype = wt.HWND
+user32.RegisterClipboardFormatW.restype = wt.UINT
+user32.RegisterClipboardFormatW.argtypes = [wt.LPCWSTR]
+user32.RegisterClassW.restype = wt.ATOM
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+user32.CreateWindowExW.restype = wt.HWND
+user32.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD,
+                                   ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                   wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID]
+user32.PeekMessageW.restype = wt.BOOL
+user32.PeekMessageW.argtypes = [ctypes.POINTER(wt.MSG), wt.HWND, wt.UINT, wt.UINT, wt.UINT]
+user32.TranslateMessage.argtypes = [ctypes.POINTER(wt.MSG)]
+user32.DispatchMessageW.restype = ctypes.c_ssize_t
+user32.DispatchMessageW.argtypes = [ctypes.POINTER(wt.MSG)]
+user32.IsWindow.restype = wt.BOOL
+user32.IsWindow.argtypes = [wt.HWND]
+
+
 def _global_handle(data: bytes) -> Optional[int]:
     h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
     if not h:
@@ -209,8 +246,12 @@ class _ClipOwnerWindow:
 
     def _render(self) -> None:
         h = _global_handle(self.text.encode("utf-16-le") + b"\x00\x00")
-        if h is not None and not user32.SetClipboardData(win32con.CF_UNICODETEXT, h):
+        if h is None:
+            log.warning("clipboard render: GlobalAlloc/Lock failed")
+            return
+        if not user32.SetClipboardData(win32con.CF_UNICODETEXT, h):
             kernel32.GlobalFree(h)
+            log.warning("clipboard render: SetClipboardData failed")
             return
         self.rendered_at = time.monotonic()
 
@@ -227,7 +268,12 @@ class _ClipOwnerWindow:
             return False
         try:
             user32.EmptyClipboard()
-            if not user32.SetClipboardData(win32con.CF_UNICODETEXT, None):
+            # Delayed rendering: SetClipboardData(fmt, NULL) returns NULL on
+            # SUCCESS too (the return value is the data handle, and there is no
+            # data yet) — success/failure is distinguished only via last-error.
+            kernel32.SetLastError(0)
+            user32.SetClipboardData(win32con.CF_UNICODETEXT, None)
+            if kernel32.GetLastError() != 0:
                 return False
             # Keep dictated text out of Win+V history / cloud sync (constitution I).
             for name, value in ((CF_EXCLUDE_HISTORY, "1"), (CF_CAN_INCLUDE_HISTORY, "0")):

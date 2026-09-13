@@ -81,11 +81,12 @@ class StreamingWorker:
                     break
                 continue
 
+            held = self._timing.released_at is None if self._timing else False
             t0 = time.perf_counter()
             words = self._stt.transcribe(audio).split()
             dt = time.perf_counter() - t0
             if self._timing:
-                self._timing.add_stt(dt)
+                self._timing.add_stt(dt, held=held)
             rtf = dt / (len(audio) / SAMPLE_RATE)
             if rtf > 1.0:
                 log.warning("streaming pass RTF %.2f > 1 — consider stt_model=base for realtime", rtf)

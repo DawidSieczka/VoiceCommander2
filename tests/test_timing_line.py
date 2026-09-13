@@ -79,6 +79,19 @@ def test_stt_split_hold_vs_post_release(caplog):
     assert "eager=1" in line
 
 
+def test_stt_classified_by_start_not_finish(caplog):
+    # A pass that STARTED during the hold but finished after release counts as
+    # hold-time work — callers capture `held` before transcribing.
+    caplog.set_level(logging.INFO, logger="timing")
+    t = DictationTiming(snap(perf_eager_stt=True))
+    held = t.released_at is None      # captured at pass start (True)
+    t.mark_released()                 # release lands mid-pass
+    t.add_stt(0.7, held=held)         # completion after release
+    t.conclude("injected")
+    line = lines(caplog)[0]
+    assert "eager_stt_ms=700" in line and "stt_ms=0" in line
+
+
 def test_toggle_flags_reflect_snapshot(caplog):
     caplog.set_level(logging.INFO, logger="timing")
     t = DictationTiming(snap(perf_fast_injection=True, perf_pipelined_correction=True,

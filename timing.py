@@ -43,9 +43,15 @@ class DictationTiming:
             if self.released_at is None:
                 self.released_at = time.monotonic()
 
-    def add_stt(self, seconds: float) -> None:
+    def add_stt(self, seconds: float, held: bool | None = None) -> None:
+        """held: whether the PTT key was still down when this STT pass STARTED
+        (a pass begun during the hold counts as hold-time work even if it
+        finishes after release). Callers capture it before transcribing;
+        None falls back to the state at completion time."""
         with self._lock:
-            if self.released_at is None:
+            if held is None:
+                held = self.released_at is None
+            if held:
                 self.eager_stt_ms += int(seconds * 1000)
             else:
                 self.stt_ms += int(seconds * 1000)
