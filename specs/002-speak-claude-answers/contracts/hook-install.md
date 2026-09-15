@@ -1,10 +1,18 @@
 # Contract: Claude Code hook installation
 
-The application never edits `~/.claude/settings.json`. It generates the snippets and the
-helper script below into `%APPDATA%\VoiceCommander2\hooks\` (on first enable and whenever
-the port changes) and the tray item "Open hook instructions" opens `README-hooks.txt`
-there. The user pastes the snippet; Claude Code picks up settings edits automatically
-(file watcher), `/hooks` is an inspection menu only.
+**Revised 2026-09-15 (user decision):** the application installs the hook itself, globally,
+so a fresh machine works without manual steps. `claude_hooks.py` merges exactly one
+`Stop` HTTP hook into the user-level `%USERPROFILE%\.claude\settings.json` when read-back is
+enabled (`tts_hook_autoinstall`, default on), idempotently: other hooks and keys are
+preserved, a port change rewrites only our entry, a timestamped `settings.json.bak-*` is
+written before each modification, and an unparsable settings file is never overwritten.
+CLI: `python claude_hooks.py install|status|remove`; tray: "Claude Code hook: …" /
+"Remove Claude Code hook".
+
+The snippets and the helper script below are still generated into
+`%APPDATA%\VoiceCommander2\hooks\` for the manual path (autoinstall off, older Claude Code
+needing the command variant, or a locked-down settings file). Claude Code picks up settings
+edits automatically (file watcher); `/hooks` is an inspection menu only.
 
 Facts verified on 2026-09-15 against docs (code.claude.com/docs/en/hooks) and empirically
 on Claude Code 2.1.272:

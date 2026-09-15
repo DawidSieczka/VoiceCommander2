@@ -43,6 +43,7 @@ KNOWN_VOICES: dict[str, str] = {
     "pl_PL-darkman-medium": f"{_HF}/rhasspy/piper-voices/resolve/main/pl/pl_PL/darkman/medium/",
     "pl_PL-gosia-medium": f"{_HF}/rhasspy/piper-voices/resolve/main/pl/pl_PL/gosia/medium/",
     "pl_PL-mc_speech-medium": f"{_HF}/rhasspy/piper-voices/resolve/main/pl/pl_PL/mc_speech/medium/",
+    "pl_PL-bass-high": f"{_HF}/rhasspy/piper-voices/resolve/main/pl/pl_PL/bass/high/",   # Apache-2.0, 114 MB
     "en_US-lessac-medium": f"{_HF}/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/",
 }
 

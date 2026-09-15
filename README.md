@@ -39,7 +39,7 @@ Aplikacja może czytać na głos końcową odpowiedź każdej tury Claude Code �
 
 1. `pip install -r requirements-tts.txt` w tym samym `.venv` (silnik Piper jest na licencji GPL-3.0 i działa w osobnym procesie `tts_worker.py`).
 2. Tray → **Read Claude answers** → **Enabled**. Przy pierwszym włączeniu pobierają się głosy.
-3. Tray → **Read Claude answers** → **Open hook instructions** i wklej snippet do `%USERPROFILE%\.claude\settings.json` (aplikacja nigdy nie edytuje tego pliku sama). Wariant HTTP wymaga Claude Code ≥ 2.1.63.
+3. Hook Claude Code instaluje się sam, globalnie dla wszystkich projektów: przy włączeniu funkcji aplikacja dopisuje jeden wpis `Stop` (HTTP na `127.0.0.1:47321/speak`) do `%USERPROFILE%\.claude\settings.json`, zachowując istniejące hooki i robiąc kopię `settings.json.bak-<data>`. Ręcznie: `python claude_hooks.py install|status|remove` albo tray → **Read Claude answers** → **Claude Code hook**. Autoinstalację wyłącza `tts_hook_autoinstall=false` (wtedy snippet do wklejenia jest w **Open hook instructions**). Wariant HTTP wymaga Claude Code ≥ 2.1.63.
 4. Test bez Claude Code:
 
 ```powershell

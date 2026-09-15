@@ -84,6 +84,7 @@ class AppConfig:
     tts_speak_subagents: bool = False          # also speak SubagentStop payloads
     tts_server_enabled: bool = True
     tts_server_port: int = 47321               # loopback only
+    tts_hook_autoinstall: bool = True          # merge the Stop hook into ~/.claude/settings.json when enabled
 
 
 @dataclass(frozen=True)

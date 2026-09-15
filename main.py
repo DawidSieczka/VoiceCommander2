@@ -86,6 +86,13 @@ def main() -> int:
                 _hook_port["port"] = cfg.tts_server_port
             except Exception:
                 log.exception("could not write hook material")
+        if cfg.tts_hook_autoinstall:
+            # User-level settings.json -> every project on this machine. Idempotent
+            # merge with backup; other hooks are preserved (claude_hooks.py).
+            import claude_hooks
+            outcome = claude_hooks.ensure_installed(cfg.tts_server_port)
+            if outcome != "unchanged":
+                log.info("Claude Code hook autoinstall: %s", outcome)
 
     def on_ptt_press() -> None:
         speaker.stop("PTT pressed")   # barge-in first — before the paused/model-ready guards

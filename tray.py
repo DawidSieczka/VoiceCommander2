@@ -185,6 +185,30 @@ class Tray:
         if self._speaker is not None:
             self._speaker.stop("tray Stop reading")
 
+    def _hook_label(self) -> str:
+        import claude_hooks
+        st, port = claude_hooks.status()
+        if st == "installed":
+            return f"Claude Code hook: installed (port {port})" if port == self.cfg.tts_server_port \
+                else f"Claude Code hook: installed for port {port} — click to update"
+        if st == "error":
+            return "Claude Code hook: settings.json unreadable"
+        return "Claude Code hook: install globally (~/.claude/settings.json)"
+
+    def _install_hook(self, icon, item):
+        import claude_hooks
+        outcome = claude_hooks.ensure_installed(self.cfg.tts_server_port)
+        log.info("hook install from tray: %s", outcome)
+        self._icon.update_menu()
+
+    def _remove_hook(self, icon, item):
+        import claude_hooks
+        try:
+            log.info("hook remove from tray: %s", claude_hooks.remove())
+        except Exception:
+            log.exception("hook removal failed")
+        self._icon.update_menu()
+
     def _menu(self) -> pystray.Menu:
         cfg = self.cfg
 
@@ -282,6 +306,8 @@ class Tray:
                                                      self._save()),
                                  checked=lambda item: cfg.tts_queue_policy == "latest"),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem(lambda item: self._hook_label(), self._install_hook),
+                pystray.MenuItem("Remove Claude Code hook", self._remove_hook),
                 pystray.MenuItem("Open hook instructions", open_path(cfgmod.APPDATA_DIR / "hooks" / "README-hooks.txt")),
                 pystray.MenuItem("Open pronunciation dictionary", open_path(cfgmod.APPDATA_DIR / "pronunciation.txt")),
             )),
