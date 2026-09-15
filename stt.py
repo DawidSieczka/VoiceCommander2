@@ -174,8 +174,14 @@ class Transcriber:
             text = seg.text.strip()
             if not text:
                 continue
-            if seg.no_speech_prob > 0.6:
-                log.info("rejected (no_speech_prob=%.2f): %r", seg.no_speech_prob, text)
+            # no_speech_prob is computed once per 30 s window, so one high value
+            # marks EVERY segment of the chunk. Alone it drops whole sentences of
+            # real Polish speech (medium model: 0.6-0.9 on ~15% of chunks, log
+            # analysis 2026-09-15). Use it only together with a weak decoder
+            # log-prob, same compound rule as Whisper/faster-whisper apply.
+            if seg.no_speech_prob > 0.6 and seg.avg_logprob < -1.0:
+                log.info("rejected (no_speech_prob=%.2f, avg_logprob=%.2f): %r",
+                         seg.no_speech_prob, seg.avg_logprob, text)
                 continue
             if seg.avg_logprob < -1.2:
                 log.info("rejected (avg_logprob=%.2f): %r", seg.avg_logprob, text)

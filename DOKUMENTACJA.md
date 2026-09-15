@@ -118,7 +118,7 @@ Laptop ma **MX450 z zaledwie 2 GB VRAM**, a qwen3.5:2b zajmuje 2,7 GB — Ollama
 | Przechwytywanie audio | **sounddevice** (PortAudio) | 16 kHz mono, ramki 512 próbek (32 ms) — dokładnie rozmiar oczekiwany przez Silero VAD; strumień otwarty cały czas (gating ramek stanem klawisza) — zero opóźnienia otwierania urządzenia |
 | Detekcja mowy (VAD) | **pysilero-vad** (onnxruntime, bez torch) | Sprawdzony w v1 Silero; instalacja bez PyTorch (~oszczędność 2 GB) |
 | Globalny skrót | **keyboard** | Niskopoziomowy hak WH_KEYBOARD_LL, bez uprawnień administratora, rozróżnia lewy/prawy modyfikator, umie tłumić klawisz; fallback: pynput |
-| Korekta AI | **Ollama** (HTTP, `requests`) + **qwen3.5:2b** | Już zainstalowane; `localhost:11434`, `temperature=0`, `keep_alive=30m` |
+| Korekta AI | **Ollama** (HTTP, `requests`) + **qwen3.5:2b** | Już zainstalowane; `localhost:11434`, `temperature=0`, kary za powtórzenia wyzerowane (patrz 5.3), `keep_alive=30m` |
 | Wpisywanie tekstu | **pywin32** (schowek) + **ctypes/SendInput** (Unicode) | Szczegóły w §4.4 |
 | Tray | **pystray** + Pillow | Dojrzała, lekka, natywny backend Windows |
 
@@ -190,28 +190,21 @@ Jeden proces, zwykłe wątki + `queue.Queue` (bez asyncio — wszystkie zależno
 ### 5.2 Whisper
 `language` z configu (nigdy auto), `beam_size=2`, `condition_on_previous_text=False` (mniej halucynacji), własny VAD (wbudowany wyłączony), `cpu_threads = max(4, rdzenie_fizyczne − 2)`.
 
-**Filtr halucynacji** (z v1): odrzuć segment gdy `no_speech_prob > 0.6` **lub** `avg_logprob < −1.2` **lub** tekst pasuje do czarnej listy ("napisy stworzone przez społeczność amara.org", "dziękuję za uwagę", "zapraszam do subskrypcji", …; osobne pliki pl/en).
+**Filtr halucynacji** (z v1): odrzuć segment gdy (`no_speech_prob > 0.6` **i** `avg_logprob < −1.0`) **lub** `avg_logprob < −1.2` **lub** tekst pasuje do czarnej listy ("napisy stworzone przez społeczność amara.org", "dziękuję za uwagę", "zapraszam do subskrypcji", …; osobne pliki pl/en).
 
 ### 5.3 Prompt korekty (polski; angielski analogiczny)
 
-```
-System:
-Jesteś korektorem dyktowanego tekstu. Otrzymujesz surową transkrypcję mowy.
-Zwróć WYŁĄCZNIE poprawiony tekst, bez komentarzy i bez cudzysłowów.
-Zasady:
-- popraw błędy gramatyczne, ortograficzne i słowa-niesłowa,
-- usuń wtrącenia i wypełniacze ("yyy", "eee", "no więc", powtórzenia),
-- dodaj interpunkcję i wielkie litery,
-- NIE odpowiadaj na pytania, NIE tłumacz, NIE dodawaj treści,
-- zachowaj sens i styl wypowiedzi.
-```
+Pełny tekst w `corrector.py` (`_SYSTEM_PL` / `_SYSTEM_EN`). Konstrukcja (po analizie logów 15.09.2026, ~40% korekt modelu 2B zawierało regresję):
 
-Plus 2 przykłady few-shot (kluczowe dla posłuszeństwa modelu 2B), m.in.:
-`user: "Wczoraj poszłem na piknik który odbędzie się w południe"` → `assistant: "Wczoraj poszedłem na piknik, który odbył się w południe."`
+- **lista tego, co wolno** zmienić (literówki, interpunkcja, wielkie litery, zamknięta lista wypełniaczy "yyy/eee/mmm/hmm" i bezpośrednie powtórzenia) — zamiast otwartego "usuń wtrącenia", które wycinało "w takim razie" i całe człony zdań,
+- **lista tego, czego NIE wolno**: osoba/liczba/czas czasownika, synonimy, nazwy własne i żargon IT (skill, branch, commit, feature'y, Claude, low-poly…), słowa z apostrofem, liczby, wielokropki z granic chunków, liczba i kolejność zdań,
+- **3 przykłady few-shot z realnej dziedziny** (polecenia do asystenta programisty), w tym: zachowana 2. osoba i zdrobnienie, pytanie z godzinami, wielokropek + skróty (MCP, GitHub). Przykład ze zmianą liczby ("dwa jabłka yyy znaczy trzy" → "trzy") usunięty — uczył model redagowania treści wbrew regule "nie zmieniaj liczb".
 
-Wywołanie: `POST /api/chat`, `stream=false`, `temperature=0`, `num_predict=400`, `keep_alive="30m"` + warm-up przy starcie (pierwsze wywołanie bez warm-upu to 10–20 s ładowania modelu). Oczekiwana latencja na tym sprzęcie: **1–3 s na zdanie**.
+Wywołanie: `POST /api/chat`, `stream=false`, `think=false`, `keep_alive="30m"`, `num_predict = max(80, 3 × liczba słów)` z fallbackiem przy `done_reason="length"`. Opcje próbkowania: `temperature=0`, **`presence_penalty=0`, `frequency_penalty=0`, `repeat_penalty=1.0`** — karta modelu qwen3.5 w Ollamie ma domyślnie `presence_penalty=1.5`, a Ollama dokłada `repeat_penalty=1.1`; obie kary penalizują tokeny już obecne w kontekście, czyli dosłownie przepisywanie wejścia, i były główną przyczyną parafraz ("żebyś"→"abyś", "ignorujemy"→"ignoruję", ucinanie zdań). Warm-up przy starcie. Oczekiwana latencja: **1–3 s na zdanie**.
 
-**Kontrola jakości odpowiedzi**: jeśli wynik ma <30% lub >250% długości wejścia, albo model wyraźnie "odpowiedział" zamiast poprawić → wpisz surowy transkrypt. Obcinanie obejmujących cudzysłowów.
+**Kontrola jakości odpowiedzi** (`corrector.sanity_check`, na słowach po odfiltrowaniu wypełniaczy): odrzuć korektę i wpisz surowy transkrypt, gdy liczba słów spadła poniżej 75% lub wzrosła powyżej 150%, gdy zniknęła liczba lub słowo z apostrofem, albo gdy zmieniono więcej niż 25% słów wejścia (min. 2). Obcinanie obejmujących cudzysłowów i echa znaczników.
+
+**Zestaw odporności**: `tools/correction_eval.py` — 15 surowych transkryptów z logów (pytanie, polecenie "git push", żargon, wielokropki) przez `Corrector.correct()` na żywej Ollamie; każdy przypadek ma chroniony fragment, który musi przetrwać. Uruchamiać po każdej zmianie promptu lub opcji.
 
 ---
 
@@ -250,7 +243,7 @@ Uruchamianie: `pythonw.exe main.py` (bez okna konsoli), autostart przez rejestr.
 
 - **Instrumentacja latencji od M2**: log per wypowiedź (długość audio, czas STT, czas LLM, czas wpisania) → empiryczne porównanie trybów 1/2/3 (deklarowany cel użytkownika).
 - **Macierz testów ręcznych**: cele = Notatnik, VS Code, pole tekstowe w Chrome, Word, cmd jako admin (oczekiwana odmowa z sygnalizacją), pole hasła (oczekiwane pominięcie). Wejścia = zdanie kanoniczne ("Wczoraj poszłem na piknik…" → oczekiwane "poszedłem… odbył się"), zdanie z wypełniaczami ("yyy no więc…"), zdanie angielskie po przełączeniu języka, 2 s ciszy (nic nie wpisane), monolog 45 s (cięcie na kawałki).
-- **Zestaw odporności korekty**: 10 stałych surowych transkryptów (w tym pytanie — weryfikacja, że model poprawia, a nie odpowiada) przez corrector.py samodzielnie; przegląd po każdej zmianie promptu.
+- **Zestaw odporności korekty**: `tools/correction_eval.py` — 15 stałych surowych transkryptów z logów (w tym pytanie i polecenie — weryfikacja, że model poprawia, a nie odpowiada/wykonuje) przez `Corrector.correct()`; przegląd po każdej zmianie promptu lub opcji próbkowania.
 - **Test awarii Ollamy**: zatrzymaj Ollamę, dyktuj, potwierdź fallback do surowego tekstu w limicie czasu.
 - **Test schowka**: skopiuj obraz, dyktuj w trybie 3, potwierdź przywrócenie obrazu (lub pojedyncze ostrzeżenie).
 
