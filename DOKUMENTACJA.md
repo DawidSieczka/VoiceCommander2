@@ -103,6 +103,17 @@ DICTATION mode=on_release outcome=injected total_ms=1840 stt_ms=1210 eager_stt_m
 
 ---
 
+### 2.8 Czytanie odpowiedzi Claude Code (TTS, feature 002)
+
+Claude Code po zakończeniu tury wywołuje hook `Stop` (HTTP POST na `127.0.0.1:47321/speak` albo skrypt `vc2_speak.py`), który przekazuje pole `last_assistant_message`. Serwer w tray (`speak_server.py`) odpowiada `202` natychmiast i przekazuje tekst do `tts.Speaker`:
+
+1. `text_prep.py` usuwa markdown (bloki kodu i tabele → placeholder, linki → tekst linku, URL-e → nic, inline code → treść), dzieli na zdania, stosuje słownik wymowy `pronunciation.txt` i wykrywa angielskie identyfikatory (`config.py`, `TtsSnapshot`, `list_output_devices`, `--fast`).
+2. Opcjonalnie (`tts_summarize`) `corrector.summarize()` streszcza długie odpowiedzi przez Ollamę; każda awaria = czytanie pełnego tekstu.
+3. `tts.PiperWorkerBackend` steruje procesem `tts_worker.py` (jedyny moduł importujący GPL-owy `piper`) przez pipe'y: żądania JSON, odpowiedzi jako ramki PCM. Angielskie fragmenty są fonemizowane głosem `en_US-lessac-medium` i wstrzykiwane jako `[[ … ]]` do polskiego zdania (`tts_codeswitch=inject`); alternatywa `splice` skleja audio dwóch głosów.
+4. `tts.Player` odtwarza przez `sounddevice.OutputStream` (22050 Hz, bloki 100 ms), więc `stop()` działa w ≤ 100 ms. PTT wywołuje `speaker.stop()` przed obsługą dyktowania.
+
+Polityka kolejki: `latest` (nowa odpowiedź przerywa poprzednią, domyślnie) lub `append`. Zdarzenie `SubagentStop` jest ignorowane, chyba że `tts_speak_subagents=true`. Ikona tray jest zielona podczas mówienia; stany dyktowania mają pierwszeństwo. Każde żądanie kończy się jedną linią `SPEAK id=… outcome=spoken|stopped|superseded|empty|disabled|ignored_event|error … first_audio_ms=… audio_s=…`. Szczegóły: `specs/002-speak-claude-answers/`.
+
 ## 3. Technologie
 
 ### 3.1 Kluczowa decyzja: Whisper na CPU, LLM na GPU
@@ -135,7 +146,11 @@ VoiceCommander2/
   main.py            # start, testy środowiska (CUDA/Ollama), ładowanie modelu, tray
   config.py          # dataclass ⇄ JSON w %APPDATA%, zapis atomowy
   hotkey.py          # hak klawiatury, zdarzenia PTT, tłumienie klawisza
-  audio.py           # strumień sounddevice, gating ramek, bufor pre-roll
+  audio.py           # strumień sounddevice, gating ramek, bufor pre-roll; lista urządzeń wyjściowych
+  text_prep.py       # (002) markdown → zdania i fragmenty pl/en, słownik wymowy
+  tts.py             # (002) Speaker (kolejka, stop), PiperWorkerBackend (nadzór procesu), Player
+  tts_worker.py      # (002) proces potomny z GPL-owym piper; jedyny import `piper`
+  speak_server.py    # (002) HTTP 127.0.0.1:47321 /speak /stop /health + generator snippetów hooka
   vad.py             # Silero VAD + maszyna stanów segmentacji
   stt.py             # faster-whisper (singleton), filtry halucynacji, czarne listy
   streaming_stt.py   # tryb 1: pętla LocalAgreement

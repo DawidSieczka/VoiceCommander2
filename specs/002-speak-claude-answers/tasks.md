@@ -16,9 +16,9 @@ before Phase 3.
 
 ## Phase 0: Spike — code-switching by ear (blocks Phase 3 only)
 
-- [ ] T001 Create `requirements-tts.txt` (`piper-tts==1.8.0`, `onnxruntime<2`) and install
+- [x] T001 Create `requirements-tts.txt` (`piper-tts==1.8.0`, `onnxruntime<2`) and install
       into `.venv`; verify `python -c "import piper"` works (expected: yes, prebuilt wheel).
-- [ ] T002 Write `tts_worker.py` v0: load pl+en voices from `MODELS_DIR/tts`, ops
+- [x] T002 Write `tts_worker.py` v0: load pl+en voices from `MODELS_DIR/tts`, ops
       `phonemize`/`synth`, stdio frame protocol per plan.md; run standalone on one sentence.
 - [ ] T003 [P] Collect 10 real Polish Claude Code answers with identifiers (from this
       project's session history, trimmed) into `tests/samples/answers/*.md`.
@@ -28,62 +28,62 @@ before Phase 3.
 
 ## Phase 1: Foundation (blocking prerequisites)
 
-- [ ] T005 `config.py`: add the 15 `tts_*` fields with defaults from
+- [x] T005 `config.py`: add the 15 `tts_*` fields with defaults from
       contracts/config-and-tray.md and `TtsSnapshot.from_config(cfg, corrector_available)`
       with clamps (speed 0.5–2.0, threshold ≥ 100, timeout 1–60 s).
-- [ ] T006 [P] `tests/test_config_compat.py`: old config without tts keys loads with
+- [x] T006 [P] `tests/test_config_compat.py`: old config without tts keys loads with
       defaults; unknown keys ignored; snapshot clamps.
-- [ ] T007 [P] `audio.py`: `list_output_devices()` and `_resolve_output_device(name)`
+- [x] T007 [P] `audio.py`: `list_output_devices()` and `_resolve_output_device(name)`
       mirroring the input helpers (same host API, name-prefix match, warning on stale name).
-- [ ] T008 [P] `text_prep.py`: `strip_markdown(text, *, strip_code, read_inline_code,
+- [x] T008 [P] `text_prep.py`: `strip_markdown(text, *, strip_code, read_inline_code,
       lang) -> (str, StripStats)`; `split_sentences(text) -> list[str]` with abbreviation
       guard and 350-char splitting; `detect_lang(text)`.
-- [ ] T009 [P] `tests/test_text_prep.py`: table-driven cases for fenced blocks, tables,
+- [x] T009 [P] `tests/test_text_prep.py`: table-driven cases for fenced blocks, tables,
       headings, emphasis, links, URLs, inline code kept/skipped, lists, HTML, emoji,
       abbreviations, long sentence split, language detection; run on `tests/samples`.
-- [ ] T010 `tts.py` core: `SpeakRequest`, `RequestOutcome` (idempotent `conclude()` →
+- [x] T010 `tts.py` core: `SpeakRequest`, `RequestOutcome` (idempotent `conclude()` →
       one `SPEAK` line), `Speaker` with `_speak_q`, worker thread `tts-worker`, `None`
       sentinel, policies `latest`/`append`, current-id gate, `stop()`, `shutdown()`.
-- [ ] T011 `tts.py` `Player`: `sd.OutputStream` at engine sample rate, callback pops
+- [x] T011 `tts.py` `Player`: `sd.OutputStream` at engine sample rate, callback pops
       ≤ 100 ms blocks, 150 ms inter-sentence silence, volume 0.9, `stop()` = event + clear +
       `abort()`, on-speaking/on-idle callbacks, stream error → logged + stopped.
-- [ ] T012 `tests/conftest.py`: `FakeEngine` (silence chunks, configurable per-sentence
+- [x] T012 `tests/conftest.py`: `FakeEngine` (silence chunks, configurable per-sentence
       delay, raise mode), `FakePlayer` (records chunks, honours stop, reports timing).
-- [ ] T013 `tests/test_speak_queue.py`: latest supersedes and logs `superseded by`; append
+- [x] T013 `tests/test_speak_queue.py`: latest supersedes and logs `superseded by`; append
       preserves order; stop during synthesis discards later chunks; stale-id results are
       dropped; empty text → `outcome=empty`; disabled snapshot → `outcome=disabled`;
       engine raise → `outcome=error`; exactly one summary line per request; shutdown
       drains and joins.
-- [ ] T014 `tts.py` `PiperWorkerBackend`: spawn `sys.executable tts_worker.py` with
+- [x] T014 `tts.py` `PiperWorkerBackend`: spawn `sys.executable tts_worker.py` with
       `CREATE_NO_WINDOW`, reader thread routing frames by id, `load()` in thread
       `tts-loader`, `synthesize()`/`phonemize()` with per-call timeouts, respawn with
       back-off on EOF/timeout, `state`/`reason` for the tray, `terminate→kill` in
       `shutdown()`, unit test with a fake worker script (`tests/test_worker_protocol.py`).
-- [ ] T015 `tts.py` voice management: known-voice table (data-model §4), `ensure_voices()`
+- [x] T015 `tts.py` voice management: known-voice table (data-model §4), `ensure_voices()`
       one-time download to `MODELS_DIR/tts` with `.part` files and log lines, states
       `missing/downloading/loading/ready/error`, `reload_if_changed()` keyed on
       `(voice_pl, voice_en)`.
 
 ## Phase 2: US1 + US2 — MVP (speak the answer, stop on PTT)
 
-- [ ] T016 [US1] `speak_server.py`: `ThreadingHTTPServer` on `127.0.0.1:port`, thread
+- [x] T016 [US1] `speak_server.py`: `ThreadingHTTPServer` on `127.0.0.1:port`, thread
       `speak-server`, `POST /speak` (hook JSON or `{text}`, 202 in ≤ 50 ms, 400/413/415
       rules), `POST /stop`, `GET /health`, port-busy → `state=error reason="port N busy"`.
-- [ ] T017 [P] [US1] `tests/test_speak_server.py`: ephemeral port; both body shapes;
+- [x] T017 [P] [US1] `tests/test_speak_server.py`: ephemeral port; both body shapes;
       `ignored_event` for `SubagentStop` when disabled; oversize body; wrong content type;
       health JSON; server responds before the fake engine finishes; shutdown frees the port.
-- [ ] T018 [US1] `main.py` wiring: construct `Speaker`, `PiperWorkerBackend`, `Player`,
+- [x] T018 [US1] `main.py` wiring: construct `Speaker`, `PiperWorkerBackend`, `Player`,
       `SpeakServer` after the pipeline; start server even when `tts_enabled=false` if
       `tts_server_enabled`; `on_config_change` → `speaker.apply_config()` (reload voices
       only when changed, reopen player device only when changed); status map adds
       `speaking → "speaking…"`; shutdown order: server → speaker → backend → existing.
-- [ ] T019 [US2] `main.py`: `on_ptt_press = lambda: (speaker.stop(), pipeline.ptt_pressed())`
+- [x] T019 [US2] `main.py`: `on_ptt_press = lambda: (speaker.stop(), pipeline.ptt_pressed())`
       so stop runs before the paused/model-ready guards; tray "Stop reading" → `speaker.stop()`.
-- [ ] T020 [US1] `tray.py`: submenu "Read Claude answers" with `Enabled` and `Stop reading`,
+- [x] T020 [US1] `tray.py`: submenu "Read Claude answers" with `Enabled` and `Stop reading`,
       dynamic top label with reason from `speaker.state/reason`, sub-items disabled unless
       `ready`; `_COLORS["speaking"]`; `set_state` precedence recording > processing >
       speaking > idle.
-- [ ] T021 [US1] `speak_server.py` hook material: write `hook-http.json`,
+- [x] T021 [US1] `speak_server.py` hook material: write `hook-http.json`,
       `hook-command.json`, `vc2_speak.py` (stdlib, always exit 0, never prints), and
       `README-hooks.txt` to `APPDATA_DIR/hooks` on first enable and port change; tray item
       "Open hook instructions".
@@ -92,22 +92,22 @@ before Phase 3.
 
 ## Phase 3: US3 + US4 — pronunciation and markdown quality
 
-- [ ] T030 [US3] `text_prep.py` pronunciation dictionary: `pronunciation.txt` loader
+- [x] T030 [US3] `text_prep.py` pronunciation dictionary: `pronunciation.txt` loader
       (`term = spoken [| lang]`, `#` comments, longest-first, whole-token,
       case-insensitive), seed file with ≥ 20 dev terms written on first run, hot-reload per
       request, log `dictionary_hits`.
-- [ ] T031 [US3] `text_prep.py` identifier heuristic (`is_english_token`): extension,
+- [x] T031 [US3] `text_prep.py` identifier heuristic (`is_english_token`): extension,
       camelCase, snake_case, `--flag`, ≤ 6-letter acronym, small English word list; path
       reduction to last component + spoken extension; span builder `[(text, lang)]` with
       merge of adjacent same-lang spans.
-- [ ] T032 [US3] Code-switching per T004 verdict: either `inject_phonemes(sentence)` (query
+- [x] T032 [US3] Code-switching per T004 verdict: either `inject_phonemes(sentence)` (query
       worker `phonemize` for en tokens, embed `[[ … ]]`) or two-voice splicing in `Speaker`
       (synthesise spans per voice, concatenate with 80 ms gaps). Keep the other path
       behind `tts_codeswitch = "inject" | "splice"` only if the spike was inconclusive.
-- [ ] T033 [P] [US3] `tests/test_lang_spans.py`: heuristic table, dictionary precedence,
+- [x] T033 [P] [US3] `tests/test_lang_spans.py`: heuristic table, dictionary precedence,
       path reduction, span merging, phoneme-injection string shape, sample answers produce
       ≥ 1 en span each where expected.
-- [ ] T034 [US4] Placeholders: "fragment kodu"/"tabela" (pl) and "code block"/"table" (en)
+- [x] T034 [US4] Placeholders: "fragment kodu"/"tabela" (pl) and "code block"/"table" (en)
       when `tts_strip_code`; an answer that is entirely code/table speaks the placeholder
       once; extend `tests/test_text_prep.py`.
 - [ ] T035 [US3/US4] Manual smoke quickstart D + the 10 samples; user rates ≥ 8/10
@@ -115,21 +115,21 @@ before Phase 3.
 
 ## Phase 4: US5 + US6 — options and polish
 
-- [ ] T040 [US5] `corrector.py`: `summarize(text, timeout_s, lang) -> str | None` with
+- [x] T040 [US5] `corrector.py`: `summarize(text, timeout_s, lang) -> str | None` with
       `_SUMMARY_PL/_SUMMARY_EN`, `<streszczenie>` markers, `think:false`, `temperature:0`,
       `num_predict` cap, ratio/sentence-count sanity check, never raises; log `LLM summary
       %.1f s ratio=%.2f`.
-- [ ] T041 [P] [US5] `tests/test_tts_summary.py`: monkeypatch `requests.post` — success,
+- [x] T041 [P] [US5] `tests/test_tts_summary.py`: monkeypatch `requests.post` — success,
       timeout, 404, junk output, over-long output → fallback; below threshold → no call;
       stale id after summary → discarded.
-- [ ] T042 [US5] `Speaker`: call `summarize` only when `snapshot.summarize` and
+- [x] T042 [US5] `Speaker`: call `summarize` only when `snapshot.summarize` and
       `clean_chars > threshold`; log skip reasons.
-- [ ] T043 [US6] `tray.py`: Voice (dynamic list of downloaded pl voices + "Download default
+- [x] T043 [US6] `tray.py`: Voice (dynamic list of downloaded pl voices + "Download default
       voices…"), Speed radios, Output device dynamic list, "Summarise long answers"
       (grayed with corrector reason), "Queue: latest wins", "Open pronunciation dictionary".
 - [ ] T044 [US6] Idle unload: worker unloads voices after 30 min idle and reloads on demand
       (log both); state shows `ready (cold)`.
-- [ ] T045 [P] Docs: README.md and DOKUMENTACJA.md section "Czytanie odpowiedzi Claude
+- [x] T045 [P] Docs: README.md and DOKUMENTACJA.md section "Czytanie odpowiedzi Claude
       Code" (install `requirements-tts.txt`, enable in tray, paste hook, Store-Python path
       caveat, licence note on the GPL worker); update `specs/002…/quickstart-results.md`.
 - [ ] T046 Manual smoke quickstart E–G; full-day soak (SC-005) with log review: every

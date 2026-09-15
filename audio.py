@@ -52,6 +52,36 @@ def _resolve_device(name: str) -> Optional[int]:
     return None
 
 
+def list_output_devices() -> list[str]:
+    """Unique output-device names (default host API), for the tray menu."""
+    names: list[str] = []
+    try:
+        hostapi = sd.query_hostapis(sd.default.hostapi)
+        for idx in hostapi["devices"]:
+            dev = sd.query_devices(idx)
+            if dev["max_output_channels"] > 0 and dev["name"] not in names:
+                names.append(dev["name"])
+    except Exception:
+        log.exception("output device enumeration failed")
+    return names
+
+
+def resolve_output_device(name: str) -> Optional[int]:
+    """Device index for a saved output name; None = system default (also on stale names)."""
+    if not name:
+        return None
+    try:
+        hostapi = sd.query_hostapis(sd.default.hostapi)
+        for idx in hostapi["devices"]:
+            dev = sd.query_devices(idx)
+            if dev["max_output_channels"] > 0 and dev["name"] == name:
+                return idx
+    except Exception:
+        pass
+    log.warning("saved output device %r not found — using system default", name)
+    return None
+
+
 class MicCapture:
     def __init__(self, on_frame: Callable[[np.ndarray], None], get_device_name: Callable[[], str] = lambda: ""):
         self._on_frame = on_frame

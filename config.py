@@ -67,6 +67,24 @@ class AppConfig:
     realtime_interval_s: float = 1.2
     realtime_window_max_s: float = 12.0
 
+    # Spoken read-back of Claude Code answers (feature 002; tray > Read Claude answers)
+    tts_enabled: bool = False
+    tts_backend: str = "piper"                 # "piper" (worker subprocess)
+    tts_voice_pl: str = "pl_PL-jarvis_wg_glos-medium"
+    tts_voice_en: str = "en_US-lessac-medium"
+    tts_speed: float = 1.0                     # 0.5-2.0; Piper length_scale = 1/speed
+    tts_output_device: str = ""                # "" = system default output device
+    tts_queue_policy: str = "latest"           # "latest" (new answer interrupts) | "append"
+    tts_strip_code: bool = True                # code blocks/tables -> spoken placeholder
+    tts_read_inline_code: bool = True          # keep `inline code` content
+    tts_codeswitch: str = "inject"             # "inject" EN phonemes into PL voice | "splice" two voices
+    tts_summarize: bool = False                # long answers -> Ollama summary first
+    tts_summary_threshold: int = 600           # cleaned characters
+    tts_summary_timeout_s: float = 8.0
+    tts_speak_subagents: bool = False          # also speak SubagentStop payloads
+    tts_server_enabled: bool = True
+    tts_server_port: int = 47321               # loopback only
+
 
 @dataclass(frozen=True)
 class PerfSnapshot:
@@ -92,6 +110,48 @@ class PerfSnapshot:
             short_text_chars=max(1, cfg.short_text_chars),
             clipboard_wait_max_ms=min(1000, max(50, cfg.clipboard_wait_max_ms)),
             mode=cfg.mode,
+            language=cfg.language,
+        )
+
+
+@dataclass(frozen=True)
+class TtsSnapshot:
+    """Immutable read-back settings, captured when a speak request is accepted.
+
+    A request in flight completes under the settings it started with; a tray
+    change applies from the next request (same rule as PerfSnapshot).
+    """
+    enabled: bool
+    voice_pl: str
+    voice_en: str
+    speed: float
+    output_device: str
+    queue_policy: str
+    strip_code: bool
+    read_inline_code: bool
+    codeswitch: str
+    summarize: bool
+    summary_threshold: int
+    summary_timeout_s: float
+    speak_subagents: bool
+    language: str
+
+    @staticmethod
+    def from_config(cfg: AppConfig, corrector_available: bool = False) -> "TtsSnapshot":
+        return TtsSnapshot(
+            enabled=bool(cfg.tts_enabled),
+            voice_pl=cfg.tts_voice_pl,
+            voice_en=cfg.tts_voice_en,
+            speed=min(2.0, max(0.5, float(cfg.tts_speed))),
+            output_device=cfg.tts_output_device,
+            queue_policy="append" if cfg.tts_queue_policy == "append" else "latest",
+            strip_code=bool(cfg.tts_strip_code),
+            read_inline_code=bool(cfg.tts_read_inline_code),
+            codeswitch="splice" if cfg.tts_codeswitch == "splice" else "inject",
+            summarize=bool(cfg.tts_summarize) and corrector_available,
+            summary_threshold=max(100, int(cfg.tts_summary_threshold)),
+            summary_timeout_s=min(60.0, max(1.0, float(cfg.tts_summary_timeout_s))),
+            speak_subagents=bool(cfg.tts_speak_subagents),
             language=cfg.language,
         )
 

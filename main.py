@@ -43,19 +43,62 @@ def main() -> int:
 
     tray: Tray | None = None
 
-    def on_status(state: str) -> None:
+    # Tray state: dictation states win over "speaking" (spec FR-017).
+    _view = {"dictation": "loading", "speaking": False}
+    _view_lock = threading.Lock()
+
+    def _render_state() -> None:
+        with _view_lock:
+            d, s = _view["dictation"], _view["speaking"]
+        state = d if d != "idle" else ("speaking" if s else "idle")
         if tray:
             tray.set_state(state, {"idle": "ready", "recording": "recording…",
-                                   "processing": "processing…"}.get(state, state))
+                                   "processing": "processing…", "speaking": "speaking…"}.get(state, state))
+
+    def on_status(state: str) -> None:
+        with _view_lock:
+            _view["dictation"] = state
+        _render_state()
+
+    def on_speaking(active: bool) -> None:
+        with _view_lock:
+            _view["speaking"] = active
+        _render_state()
 
     pipeline = Pipeline(cfg, transcriber, corrector, injector, on_status)
 
-    ptt = PushToTalk(cfg.ptt_key, pipeline.ptt_pressed, pipeline.ptt_released)
+    # Spoken read-back of Claude Code answers (feature 002). The GPL Piper engine
+    # runs in a worker subprocess; nothing here imports it.
+    from speak_server import SpeakServer, write_hook_material
+    from tts import PiperWorkerBackend, Player, Speaker, VoiceStore
+    speaker = Speaker(cfg, PiperWorkerBackend(VoiceStore()),
+                      Player(lambda: cfg.tts_output_device),
+                      summarize=corrector.summarize,
+                      corrector_available=lambda: corrector.available,
+                      on_speaking=on_speaking)
+    speak_server = SpeakServer(cfg, speaker, on_state_change=lambda: tray and tray.refresh_menu())
+    _hook_port = {"port": None}
+
+    def _ensure_hook_material() -> None:
+        if _hook_port["port"] != cfg.tts_server_port:
+            try:
+                write_hook_material(cfg.tts_server_port)
+                _hook_port["port"] = cfg.tts_server_port
+            except Exception:
+                log.exception("could not write hook material")
+
+    def on_ptt_press() -> None:
+        speaker.stop("PTT pressed")   # barge-in first — before the paused/model-ready guards
+        pipeline.ptt_pressed()
+
+    ptt = PushToTalk(cfg.ptt_key, on_ptt_press, pipeline.ptt_released)
 
     def on_exit() -> None:
         log.info("exit requested")
         ptt.stop()
         corrector.stop()
+        speak_server.shutdown()
+        speaker.shutdown()
         pipeline.shutdown()
         if tray:
             tray.stop()
@@ -64,11 +107,16 @@ def main() -> int:
         injector.method = cfg.injection_method
         pipeline.reopen_mic()
         transcriber.reload_if_changed()
-        log.info("config changed: mode=%s lang=%s correction=%s ptt=%s mic=%r",
-                 cfg.mode, cfg.language, cfg.ai_correction, cfg.ptt_key, cfg.input_device)
+        speaker.apply_config()
+        if cfg.tts_enabled:
+            _ensure_hook_material()
+        log.info("config changed: mode=%s lang=%s correction=%s ptt=%s mic=%r tts=%s",
+                 cfg.mode, cfg.language, cfg.ai_correction, cfg.ptt_key, cfg.input_device,
+                 cfg.tts_enabled)
 
     tray = Tray(cfg, on_config_change, on_exit, ptt.set_key,
-                corrector_status=lambda: corrector.status)
+                corrector_status=lambda: corrector.status,
+                speaker=speaker)
 
     def on_ollama_change() -> None:
         if tray:
@@ -90,6 +138,12 @@ def main() -> int:
     threading.Thread(target=load_model, name="model-loader", daemon=True).start()
     corrector.start_keepalive()
     ptt.start()
+
+    if cfg.tts_server_enabled:
+        speak_server.start()        # listens even when read-back is off, so /health works
+    if cfg.tts_enabled:
+        _ensure_hook_material()
+        speaker.ensure_loaded()     # warm the engine in the background (thread tts-loader)
 
     tray.run()  # blocks until Exit
     log.info("bye")

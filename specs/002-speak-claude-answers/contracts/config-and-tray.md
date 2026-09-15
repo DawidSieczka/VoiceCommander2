@@ -13,6 +13,7 @@
 | `tts_queue_policy` | `"latest"` | `latest` or `append`. |
 | `tts_strip_code` | `true` | Replace fenced blocks / tables by a spoken placeholder; `false` = omit silently. |
 | `tts_read_inline_code` | `true` | Keep inline-code content (file names, flags). |
+| `tts_codeswitch` | `"inject"` | `inject` = English phonemes injected into the Polish voice (one timbre); `splice` = two voices concatenated. Added so the listening spike can flip without code changes. |
 | `tts_summarize` | `false` | Off by default: it costs an Ollama round-trip and the user has not asked for it to be default-on. |
 | `tts_summary_threshold` | `600` | Characters of cleaned text. |
 | `tts_summary_timeout_s` | `8.0` | `(connect 2 s, read timeout)`. |

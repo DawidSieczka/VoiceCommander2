@@ -53,3 +53,29 @@ def test_snapshot_is_immutable():
     except Exception:
         raised = True
     assert raised
+
+
+# --- feature 002: TTS keys (T006) ---
+
+def test_old_config_gets_tts_defaults(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"language": "pl"}), encoding="utf-8")
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", path)
+    cfg = cfgmod.load()
+    assert cfg.tts_enabled is False
+    assert cfg.tts_voice_pl == "pl_PL-jarvis_wg_glos-medium"
+    assert cfg.tts_server_port == 47321
+    assert cfg.tts_queue_policy == "latest"
+    assert cfg.tts_summarize is False
+
+
+def test_tts_snapshot_clamps_and_gates_summary():
+    from config import TtsSnapshot
+    cfg = AppConfig(tts_speed=9.0, tts_summary_threshold=5, tts_summary_timeout_s=0.1,
+                    tts_summarize=True, tts_queue_policy="weird", tts_codeswitch="weird")
+    snap = TtsSnapshot.from_config(cfg, corrector_available=False)
+    assert snap.speed == 2.0 and snap.summary_threshold == 100 and snap.summary_timeout_s == 1.0
+    assert snap.summarize is False            # Ollama unusable -> no summary
+    assert snap.queue_policy == "latest" and snap.codeswitch == "inject"
+    assert TtsSnapshot.from_config(cfg, corrector_available=True).summarize is True
+    assert TtsSnapshot.from_config(AppConfig(tts_speed=0.1)).speed == 0.5

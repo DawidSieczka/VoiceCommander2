@@ -144,6 +144,82 @@ class FakeStreaming:
         return self.words
 
 
+class FakeEngine:
+    """Stands in for PiperWorkerBackend: silence chunks, configurable per-sentence delay."""
+
+    def __init__(self, delay: float = 0.0, sample_rate: int = 22050, chunk_s: float = 0.5,
+                 state: str = "ready", fail_synth: bool = False):
+        self.delay = delay
+        self.sample_rate = sample_rate
+        self.chunk_s = chunk_s
+        self.state = state
+        self.reason = "" if state == "ready" else f"fake {state}"
+        self.fail_synth = fail_synth
+        self.loaded_key = None
+        self.load_calls: list[tuple] = []
+        self.synth_calls: list[tuple[str, str]] = []      # (text, lang)
+        self.phonemize_calls: list[str] = []
+        self.shutdowns = 0
+
+    def load(self, voice_pl, voice_en):
+        self.load_calls.append((voice_pl, voice_en))
+        if self.state == "missing":
+            from tts import EngineUnavailable
+            raise EngineUnavailable(self.reason)
+        self.loaded_key = (voice_pl, voice_en)
+        self.state = "ready"
+
+    def synthesize(self, text, lang, speed, volume=0.9):
+        self.synth_calls.append((text, lang))
+        if self.fail_synth:
+            from tts import EngineUnavailable
+            raise EngineUnavailable("fake synth failure")
+        if self.delay:
+            time.sleep(self.delay)
+        yield np.zeros(int(self.sample_rate * self.chunk_s), dtype=np.int16)
+
+    def phonemize(self, text, lang="en"):
+        self.phonemize_calls.append(text)
+        return "fˈeɪk"
+
+    def shutdown(self):
+        self.shutdowns += 1
+
+
+class FakePlayer:
+    """Records what would be played; honours stop() between blocks like the real one."""
+
+    def __init__(self, get_device_name=lambda: ""):
+        self.opened: list[int] = []
+        self.written: list[int] = []           # samples per write call
+        self.silences = 0
+        self.closed = 0
+        self._stop = threading.Event()
+        self.write_delay = 0.0
+
+    def open(self, sample_rate):
+        self._stop.clear()
+        self.opened.append(sample_rate)
+
+    def write(self, pcm, sample_rate):
+        if self._stop.is_set():
+            return False
+        if self.write_delay:
+            time.sleep(self.write_delay)
+        self.written.append(len(pcm))
+        return not self._stop.is_set()
+
+    def silence(self, seconds, sample_rate):
+        self.silences += 1
+        return not self._stop.is_set()
+
+    def stop(self):
+        self._stop.set()
+
+    def close(self):
+        self.closed += 1
+
+
 def base_cfg(**overrides) -> AppConfig:
     cfg = AppConfig(mic_always_open=False, ai_correction=False)
     for k, v in overrides.items():

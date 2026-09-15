@@ -33,6 +33,21 @@ Model Whisper `small` (~460 MB) pobiera się automatycznie do `%LOCALAPPDATA%\Vo
 
 `%APPDATA%\VoiceCommander2\config.json` — m.in. `stt_model` (`base`/`small`/`medium`/`large-v3-turbo`), progi VAD, timeouty korekty, `injection_method` (`clipboard`/`sendinput`). Logi: `%APPDATA%\VoiceCommander2\logs`.
 
+## Czytanie odpowiedzi Claude Code (TTS)
+
+Aplikacja może czytać na głos końcową odpowiedź każdej tury Claude Code — po polsku, lokalnym głosem Piper (domyślnie `jarvis`), z angielską wymową nazw plików i identyfikatorów. Zero chmury; głosy (2 × ~63 MB) pobierają się raz do katalogu modeli.
+
+1. `pip install -r requirements-tts.txt` w tym samym `.venv` (silnik Piper jest na licencji GPL-3.0 i działa w osobnym procesie `tts_worker.py`).
+2. Tray → **Read Claude answers** → **Enabled**. Przy pierwszym włączeniu pobierają się głosy.
+3. Tray → **Read Claude answers** → **Open hook instructions** i wklej snippet do `%USERPROFILE%\.claude\settings.json` (aplikacja nigdy nie edytuje tego pliku sama). Wariant HTTP wymaga Claude Code ≥ 2.1.63.
+4. Test bez Claude Code:
+
+```powershell
+curl -X POST http://127.0.0.1:47321/speak -H "Content-Type: application/json" -d "{\"text\":\"Gotowe. Zaktualizowałem plik config.py.\"}"
+```
+
+Wciśnięcie klawisza PTT albo **Stop reading** natychmiast przerywa czytanie. Bloki kodu i tabele są zastępowane słowami „fragment kodu" / „tabela", inline `kod` jest czytany. Wymowę poprawisz w `pronunciation.txt` obok `config.json` (`termin = jak czytać`). Opcjonalnie **Summarise long answers** streszcza długie odpowiedzi lokalną Ollamą przed odczytaniem. Każde żądanie zostawia w logu linię `SPEAK … outcome=… first_audio_ms=…`.
+
 ## Znane ograniczenia
 
 - Okna uruchomione jako administrator nie przyjmą tekstu (ograniczenie Windows/UIPI) — wtedy uruchom aplikację jako administrator.

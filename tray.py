@@ -16,7 +16,10 @@ from config import AppConfig
 log = logging.getLogger("tray")
 
 _COLORS = {"idle": (128, 134, 139), "recording": (214, 69, 69),
-           "processing": (235, 155, 50), "loading": (100, 120, 200)}
+           "processing": (235, 155, 50), "loading": (100, 120, 200),
+           "speaking": (70, 170, 110)}
+
+_TTS_SPEEDS = ((0.8, "0.8× slower"), (1.0, "1.0× normal"), (1.2, "1.2× faster"), (1.5, "1.5× fast"))
 
 
 def _make_icon(state: str) -> Image.Image:
@@ -34,12 +37,14 @@ def _make_icon(state: str) -> Image.Image:
 class Tray:
     def __init__(self, cfg: AppConfig, on_change: Callable[[], None], on_exit: Callable[[], None],
                  set_ptt_key: Callable[[str], None],
-                 corrector_status: Callable[[], str] = lambda: "ok"):
+                 corrector_status: Callable[[], str] = lambda: "ok",
+                 speaker=None):
         self.cfg = cfg
         self._on_change = on_change
         self._on_exit = on_exit
         self._set_ptt_key = set_ptt_key
         self._corrector_status = corrector_status  # "ok" | "offline" | "no_model" | ...
+        self._speaker = speaker                    # tts.Speaker or None (feature 002)
         self._status_text = "loading model..."
         self._icon = pystray.Icon("VoiceCommander2", _make_icon("loading"),
                                   "VoiceCommander2", menu=self._menu())
@@ -109,6 +114,76 @@ class Tray:
             yield pystray.MenuItem(name, choose(name),
                                    checked=(lambda n: lambda item: self.cfg.input_device == n)(name),
                                    radio=True)
+
+    # --- spoken read-back (feature 002) ---
+
+    def _tts_ready(self) -> bool:
+        return self._speaker is not None and self._speaker.state == "ready" and not self._speaker.server_reason
+
+    def _tts_label(self) -> str:
+        if self._speaker is None:
+            return "Read Claude answers — unavailable"
+        if self._speaker.server_reason:
+            return f"Read Claude answers — {self._speaker.server_reason}"
+        state = self._speaker.state
+        if state == "ready" or (state == "loading" and self._speaker.reason == "not loaded yet"):
+            return "Read Claude answers"
+        reason = {"missing": "piper not installed", "downloading": "downloading voices…",
+                  "loading": "loading voices…"}.get(state, self._speaker.reason or "error")
+        return f"Read Claude answers — {reason}"
+
+    def _tts_settings_enabled(self) -> bool:
+        # Settings stay editable unless the engine is missing outright; the
+        # voice download/load is triggered by enabling the feature.
+        return self._speaker is not None and self._speaker.state != "missing"
+
+    def _voice_items(self):
+        from tts import KNOWN_VOICES, VoiceStore
+
+        def choose(name):
+            def do(icon, item):
+                self.cfg.tts_voice_pl = name
+                self._save()
+            return do
+
+        store = VoiceStore()
+        installed = set(store.installed("pl_"))
+        for name in sorted(set(installed) | {v for v in KNOWN_VOICES if v.startswith("pl_")}):
+            label = name if name in installed else f"{name} (download on select)"
+            yield pystray.MenuItem(label, choose(name),
+                                   checked=(lambda n: lambda item: self.cfg.tts_voice_pl == n)(name),
+                                   radio=True)
+
+    def _output_items(self):
+        from audio import list_output_devices
+
+        def choose(name):
+            def do(icon, item):
+                self.cfg.tts_output_device = name
+                self._save()
+            return do
+
+        yield pystray.MenuItem("System default", choose(""),
+                               checked=lambda item: self.cfg.tts_output_device == "", radio=True)
+        for name in list_output_devices():
+            yield pystray.MenuItem(name, choose(name),
+                                   checked=(lambda n: lambda item: self.cfg.tts_output_device == n)(name),
+                                   radio=True)
+
+    def _speed_items(self):
+        def choose(value):
+            def do(icon, item):
+                self.cfg.tts_speed = value
+                self._save()
+            return do
+        for value, label in _TTS_SPEEDS:
+            yield pystray.MenuItem(label, choose(value),
+                                   checked=(lambda v: lambda item: abs(self.cfg.tts_speed - v) < 0.01)(value),
+                                   radio=True)
+
+    def _stop_reading(self, icon, item):
+        if self._speaker is not None:
+            self._speaker.stop("tray Stop reading")
 
     def _menu(self) -> pystray.Menu:
         cfg = self.cfg
@@ -184,6 +259,31 @@ class Tray:
                 pystray.MenuItem("Eager transcription (on-release mode)", toggle("perf_eager_stt"), checked=checked("perf_eager_stt")),
                 pystray.MenuItem("Fast injection", toggle("perf_fast_injection"), checked=checked("perf_fast_injection")),
                 pystray.MenuItem("Overlapped correction (per-sentence)", toggle("perf_pipelined_correction"), checked=checked("perf_pipelined_correction")),
+            )),
+            pystray.MenuItem(lambda item: self._tts_label(), pystray.Menu(
+                pystray.MenuItem("Enabled", toggle("tts_enabled"), checked=checked("tts_enabled"),
+                                 enabled=lambda item: self._tts_settings_enabled()),
+                pystray.MenuItem("Stop reading", self._stop_reading,
+                                 enabled=lambda item: self._speaker is not None and self._speaker.speaking),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Voice", pystray.Menu(self._voice_items),
+                                 enabled=lambda item: self._tts_settings_enabled()),
+                pystray.MenuItem("Speed", pystray.Menu(self._speed_items),
+                                 enabled=lambda item: self._tts_settings_enabled()),
+                pystray.MenuItem("Output device", pystray.Menu(self._output_items),
+                                 enabled=lambda item: self._tts_settings_enabled()),
+                pystray.MenuItem(lambda item: "Summarise long answers" if self._corrector_status() in ("ok", "starting")
+                                 else "Summarise long answers — Ollama unusable",
+                                 toggle("tts_summarize"), checked=checked("tts_summarize"),
+                                 enabled=lambda item: self._corrector_status() in ("ok", "starting")),
+                pystray.MenuItem("Queue: latest answer wins",
+                                 lambda icon, item: (setattr(cfg, "tts_queue_policy",
+                                                             "append" if cfg.tts_queue_policy == "latest" else "latest"),
+                                                     self._save()),
+                                 checked=lambda item: cfg.tts_queue_policy == "latest"),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Open hook instructions", open_path(cfgmod.APPDATA_DIR / "hooks" / "README-hooks.txt")),
+                pystray.MenuItem("Open pronunciation dictionary", open_path(cfgmod.APPDATA_DIR / "pronunciation.txt")),
             )),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Paused", toggle("paused"), checked=checked("paused")),

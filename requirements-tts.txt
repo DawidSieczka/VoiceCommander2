@@ -1,0 +1,5 @@
+# Optional: local text-to-speech for reading Claude Code answers aloud.
+# piper-tts is GPL-3.0 (OHF-Voice fork); it runs in a separate worker process
+# (tts_worker.py) so the MIT-licensed application never imports it.
+piper-tts==1.8.0
+onnxruntime<2

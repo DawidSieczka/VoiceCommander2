@@ -120,6 +120,35 @@ def sanity_check(text: str, out: str) -> Optional[str]:
     return None
 
 
+_SUMMARY_MARK_OPEN, _SUMMARY_MARK_CLOSE = "<streszczenie>", "</streszczenie>"
+
+_SUMMARY_PL = """Jesteś asystentem, który streszcza odpowiedź asystenta programisty tak, aby można ją było odczytać na głos. Użytkownik przysyła tekst między znacznikami <streszczenie></streszczenie>.
+Zwróć WYŁĄCZNIE streszczenie po polsku: 2 do 3 krótkie zdania, bez znaczników, bez list, bez kodu, bez nagłówków.
+Powiedz: co zostało zrobione, co się nie udało (jeśli coś) i czy użytkownik musi podjąć jakąś decyzję lub coś zrobić.
+Nazwy plików, poleceń i technologii zostaw w oryginale."""
+
+_SUMMARY_EN = """You summarise a coding assistant's answer so it can be read aloud. The user sends the text between <streszczenie></streszczenie> markers.
+Return ONLY the summary in English: 2 to 3 short sentences, no markers, no lists, no code, no headings.
+Say what was done, what failed (if anything) and whether the user must decide or do something.
+Keep file, command and technology names as they are."""
+
+
+def summary_sanity_check(text: str, out: str) -> Optional[str]:
+    """A spoken summary must be much shorter than the source but not empty."""
+    if not out:
+        return "empty"
+    ratio = len(out) / max(len(text), 1)
+    if ratio > 0.6:
+        return f"not shorter (ratio={ratio:.2f})"
+    if len(out) < 15:
+        return "too short"
+    if out.count(".") + out.count("!") + out.count("?") > 5:
+        return "too many sentences"
+    if "```" in out or re.search(r"^\s*(?:[-*•]|\d+[.)])\s", out, re.M) or re.search(r"^\s*#", out, re.M):
+        return "contains markdown"
+    return None
+
+
 class Corrector:
     def __init__(self, cfg: AppConfig):
         self._cfg = cfg
@@ -250,4 +279,47 @@ class Corrector:
             return text
 
         log.info("LLM %.1f s: %r -> %r", time.perf_counter() - t0, text[:80], out[:80])
+        return out
+
+    # --- spoken summary (feature 002) ---
+
+    def summarize(self, text: str, timeout_s: float, lang: str = "pl") -> Optional[str]:
+        """2-3 sentence spoken summary of a long answer, or None on any failure
+        (the caller then reads the full text — never nothing)."""
+        if not text.strip() or not self.available:
+            return None
+        cfg = self._cfg
+        system = _SUMMARY_PL if lang == "pl" else _SUMMARY_EN
+        # Long answers are truncated for the 2B model's context; the head carries
+        # the "what was done" part and the tail the "next steps" part.
+        if len(text) > 6000:
+            text = text[:4000] + " … " + text[-1500:]
+        messages = [{"role": "system", "content": system},
+                    {"role": "user", "content": f"{_SUMMARY_MARK_OPEN}{text}{_SUMMARY_MARK_CLOSE}"}]
+        t0 = time.perf_counter()
+        try:
+            r = requests.post(
+                f"{cfg.ollama_url}/api/chat",
+                json={"model": cfg.ollama_model, "messages": messages, "stream": False,
+                      "think": False, "keep_alive": cfg.ollama_keep_alive,
+                      "options": {"temperature": 0, "num_predict": 220}},
+                timeout=(2, timeout_s),
+            )
+            r.raise_for_status()
+            data = r.json()
+        except requests.RequestException as e:
+            log.warning("summary failed (%s) — reading full text", type(e).__name__)
+            return None
+        except ValueError:
+            log.warning("summary failed (bad JSON) — reading full text")
+            return None
+        raw = (data.get("message") or {}).get("content", "").strip()
+        for junk in (_SUMMARY_MARK_OPEN, _SUMMARY_MARK_CLOSE, "Streszczenie:", "Summary:"):
+            raw = raw.replace(junk, " ")
+        reason = summary_sanity_check(text, raw.strip())   # before collapsing newlines (markdown check)
+        out = " ".join(raw.split())
+        if reason:
+            log.warning("summary sanity check failed (%s) — reading full text: %r", reason, out[:80])
+            return None
+        log.info("LLM summary %.1f s: %d -> %d chars", time.perf_counter() - t0, len(text), len(out))
         return out
