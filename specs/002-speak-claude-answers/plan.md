@@ -145,9 +145,11 @@ spike result, placeholders, path handling, sample-based tests, quickstart D.
 **Phase 4 — options (US5 + US6)**: `summarize()`, voice/speed/device/queue menus, speaking
 tray state, README/DOKUMENTACJA sections, quickstart E–G.
 
-## Decisions that need the user's confirmation (defaults applied in the plan)
+## Decisions confirmed by the user (2026-09-15)
 
-| # | Decision | Default in plan | Alternative |
+All six defaults below were confirmed one by one; the "Alternative" column is kept for the record.
+
+| # | Decision | Confirmed choice | Alternative (rejected) |
 |---|---|---|---|
 | 1 | Piper process model | Worker subprocess (GPL isolation, crash isolation, hard stop) | In-process import: ~120 fewer lines; the combined program is GPL-licensed under the FSF reading; fine for private use |
 | 2 | Summarise long answers by default | Off | On with threshold 600 (handoff) |

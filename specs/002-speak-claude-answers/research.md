@@ -190,7 +190,7 @@ with table-driven tests on real Claude Code answers captured from this project's
 (≥ 10 samples, Polish with identifiers). Manual smoke per quickstart A–G. Timing: every
 request logs `first_audio_ms`, so SC-001 is checked from the log alone.
 
-## Open decisions surfaced to the user (defaults chosen, see plan.md)
+## Decisions confirmed by the user on 2026-09-15 (all defaults kept, see plan.md)
 
 1. In-process Piper (simpler, GPL applies to the combined program) vs worker subprocess
    (default).
