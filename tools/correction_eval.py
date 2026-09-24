@@ -21,7 +21,7 @@ CASES = [
     # (raw transcript, what a correct output must keep — substring, or None)
     ("Wczorajsze 3 feature'y chciałbym wypchnąć na branch'u main.", "Wczorajsze 3 feature'y"),
     ("Na moment, kiedy nie przetestuje tego jeszcze lepiej, ignorujemy te poprawki, które zaproponowałeś.", "ignorujemy"),
-    ("Dobra, mi się wydaje, że teraz powinieneś przejść do... planowania refaktorów, znaleźć odpowiedni wzorzec... działania Heavy Agents Workflow, które moglibyśmy tutaj przygotować.", "powinieneś przejść do..."),
+    ("Dobra, mi się wydaje, że teraz powinieneś przejść do... planowania refaktorów, znaleźć odpowiedni wzorzec... działania Heavy Agents Workflow, które moglibyśmy tutaj przygotować.", "powinieneś przejść do"),
     ("Chciałbym, żebyś wygenerował te ikonki, 20 ikon na pojedynczy skill w folderze poza projektem.", "żebyś wygenerował te ikonki, 20"),
     ("Wygeneruję na podstawie grafiki low-poly Dla każdego skilla 5 odmian związany w sobie stylistycznie grafik low poly", "skilla 5"),
     ("Zweryfikuj, czy potrzebujemy zupdate'ować Claude'a, ponieważ widzę folder commands", "Claude'a"),
@@ -34,10 +34,16 @@ CASES = [
     ("o której yyy odjeżdża pociąg o czternastej czy o piętnastej", "czternastej"),
     ("git push", "git push"),                                                   # command: must not be carried out
     ("Skill do zwiększenia prędkości i strzelania nie powinien mieć artefaktów w backgroundzie oraz strzałka powinna być skierowana w górę.", "backgroundzie"),
+    # pause periods from Whisper segment boundaries (logs 2026-09-16)
+    ("Na razie skupmy się na stylistyce. i potem będziemy iteracyjnie przechodzić do kolorów.", "stylistyce i potem"),      # deterministic
+    ("Na razie nas nie interesuje animacja. Zmiksujemy to do tego szablonu. Ani też animowanie postaci.", "szablonu ani"),   # model judgment
+    ("Myślę też, że ten refaktor jest bardzo mocno zestarzały. moje ostatnie poprawki tego nie ruszały.", "poprawki tego nie ruszały"),
 ]
 
 
 def main() -> int:
+    # Polish output on a cp1252 console (git bash / pipes) must not crash the tool.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("corrector").setLevel(logging.WARNING)   # show only sanity-check fallbacks
     cfg = AppConfig.load() if hasattr(AppConfig, "load") else AppConfig()

@@ -25,9 +25,20 @@ class AppConfig:
 
     # STT
     stt_model: str = "small"              # base|small|medium|large-v3-turbo
-    stt_device: str = "cpu"               # cpu by design (MX450 2GB is owned by Ollama)
+    stt_device: str = "cpu"               # cpu|cuda (cuda falls back to cpu/int8 when unusable)
     stt_compute_type: str = "int8"
     beam_size: int = 2
+    # Named STT engine presets (tray > STT profile). The same config.json
+    # travels between machines with very different GPUs, so the user picks the
+    # preset for the machine at hand; editable here, matched by value.
+    stt_profiles: dict = field(default_factory=lambda: {
+        "RTX laptop — large-v3-turbo on GPU (float16, beam 5)":
+            {"stt_model": "large-v3-turbo", "stt_device": "cuda", "stt_compute_type": "float16", "beam_size": 5},
+        "RTX laptop — medium on GPU (int8_float16, beam 2)":
+            {"stt_model": "medium", "stt_device": "cuda", "stt_compute_type": "int8_float16", "beam_size": 2},
+        "MX450 laptop — small on CPU (int8, beam 2; GPU left to Ollama)":
+            {"stt_model": "small", "stt_device": "cpu", "stt_compute_type": "int8", "beam_size": 2},
+    })
 
     # VAD / segmentation (ms)
     vad_start_threshold: float = 0.50
@@ -41,8 +52,16 @@ class AppConfig:
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3.5:2b"
     ollama_keep_alive: str = "30m"
+    ollama_num_gpu: int = -1              # -1 = Ollama decides (GPU when it fits); 0 = force CPU; N = layers on GPU
     correction_timeout_sentence_s: float = 20.0
     correction_timeout_release_s: float = 45.0
+    fix_pause_marks: bool = True          # drop Whisper's pause "..." and ". lowercase" before correction
+
+    # Model store (Whisper + TTS voices). "" = MODELS_DIR (%LOCALAPPDATA%). Set a
+    # short path (e.g. D:\VoiceCommander2\models) when the default is virtualised
+    # by Store Python into ...\Packages\...\LocalCache: the Hugging Face blob
+    # tmp name pushes it past Windows' 260-char limit and model.bin never downloads.
+    models_dir: str = ""
 
     # Audio input: "" = Windows default input device, otherwise device name
     input_device: str = ""
@@ -85,6 +104,30 @@ class AppConfig:
     tts_server_enabled: bool = True
     tts_server_port: int = 47321               # loopback only
     tts_hook_autoinstall: bool = True          # merge the Stop hook into ~/.claude/settings.json when enabled
+
+
+def models_dir(cfg: "AppConfig") -> Path:
+    return Path(cfg.models_dir) if cfg.models_dir else MODELS_DIR
+
+
+STT_PROFILE_KEYS = ("stt_model", "stt_device", "stt_compute_type", "beam_size")
+
+
+def stt_profile_name(cfg: "AppConfig") -> str | None:
+    """Name of the preset whose values equal the current STT settings, or None
+    when the user edited them by hand (tray shows "Custom")."""
+    current = {k: getattr(cfg, k) for k in STT_PROFILE_KEYS}
+    for name, values in cfg.stt_profiles.items():
+        if all(values.get(k) == current[k] for k in STT_PROFILE_KEYS):
+            return name
+    return None
+
+
+def apply_stt_profile(cfg: "AppConfig", name: str) -> None:
+    values = cfg.stt_profiles[name]
+    for k in STT_PROFILE_KEYS:
+        if k in values:
+            setattr(cfg, k, values[k])
 
 
 @dataclass(frozen=True)

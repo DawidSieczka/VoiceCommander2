@@ -98,6 +98,64 @@ class Tray:
             self._save()
         return do
 
+    def _installed_ollama_models(self) -> list[str] | None:
+        """Names from the local Ollama (`GET /api/tags`), cached for a few
+        seconds because pystray re-renders the submenu on every open. None when
+        the server does not answer. Per machine by construction."""
+        import time
+        import requests
+        ts, names = getattr(self, "_models_cache", (0.0, None))
+        if time.monotonic() - ts < 5:
+            return names
+        try:
+            r = requests.get(f"{self.cfg.ollama_url}/api/tags", timeout=1.5)
+            r.raise_for_status()
+            names = sorted(m["name"] for m in r.json().get("models", []) if m.get("name"))
+        except Exception:
+            names = None
+        self._models_cache = (time.monotonic(), names)
+        return names
+
+    def _ollama_model_items(self):
+        """One radio item per model installed in this machine's Ollama; the
+        configured model is listed even when missing here (config travels
+        between laptops), marked so the user sees why correction is gray."""
+        def choose(name):
+            def do(icon, item):
+                self.cfg.ollama_model = name
+                self._save()
+            return do
+        names = self._installed_ollama_models()
+        current = self.cfg.ollama_model
+        if names is None:
+            yield pystray.MenuItem("Ollama not running", None, enabled=False)
+            yield pystray.MenuItem(f"{current} (configured)", None, checked=lambda item: True,
+                                   radio=True, enabled=False)
+            return
+        if current not in names:
+            yield pystray.MenuItem(f"{current} (not installed here — ollama pull)", None,
+                                   checked=lambda item: True, radio=True, enabled=False)
+        for name in names:
+            yield pystray.MenuItem(name, choose(name),
+                                   checked=lambda item, n=name: self.cfg.ollama_model == n,
+                                   radio=True)
+
+    def _stt_profile_items(self):
+        """One radio item per preset in cfg.stt_profiles; 'Custom' when the
+        current model/device/compute/beam match none of them."""
+        def choose(name):
+            def do(icon, item):
+                cfgmod.apply_stt_profile(self.cfg, name)
+                self._save()
+            return do
+        for name in self.cfg.stt_profiles:
+            yield pystray.MenuItem(name, choose(name),
+                                   checked=lambda item, n=name: cfgmod.stt_profile_name(self.cfg) == n,
+                                   radio=True)
+        yield pystray.MenuItem("Custom (edit config.json)", None,
+                               checked=lambda item: cfgmod.stt_profile_name(self.cfg) is None,
+                               radio=True, enabled=False)
+
     def _mic_items(self):
         """Dynamic submenu: system default + currently present input devices."""
         from audio import list_input_devices
@@ -261,6 +319,7 @@ class Tray:
             pystray.MenuItem(lambda item: self._ai_correction_label(),
                              toggle("ai_correction"), checked=checked("ai_correction"),
                              enabled=lambda item: self._corrector_status() in ("ok", "starting")),
+            pystray.MenuItem("Correction model (installed in Ollama)", pystray.Menu(self._ollama_model_items)),
             pystray.MenuItem("Push-to-talk key", pystray.Menu(
                 pystray.MenuItem("F9 (default)", set_attr("ptt_key", "f9"), checked=checked("ptt_key", "f9"), radio=True),
                 pystray.MenuItem("Right Ctrl", set_attr("ptt_key", "right ctrl"), checked=checked("ptt_key", "right ctrl"), radio=True),
@@ -268,10 +327,11 @@ class Tray:
                 pystray.MenuItem("Scroll Lock", set_attr("ptt_key", "scroll lock"), checked=checked("ptt_key", "scroll lock"), radio=True),
             )),
             pystray.MenuItem("Microphone", pystray.Menu(self._mic_items)),
+            pystray.MenuItem("STT profile (per machine)", pystray.Menu(self._stt_profile_items)),
             pystray.MenuItem("Recognition model", pystray.Menu(
                 pystray.MenuItem("Small — fastest, least accurate", set_attr("stt_model", "small"), checked=checked("stt_model", "small"), radio=True),
                 pystray.MenuItem("Medium — balanced (GPU)", set_attr("stt_model", "medium"), checked=checked("stt_model", "medium"), radio=True),
-                pystray.MenuItem("Large-v3-turbo — most accurate, slow (CPU)", set_attr("stt_model", "large-v3-turbo"), checked=checked("stt_model", "large-v3-turbo"), radio=True),
+                pystray.MenuItem("Large-v3-turbo — most accurate (GPU; slow on CPU)", set_attr("stt_model", "large-v3-turbo"), checked=checked("stt_model", "large-v3-turbo"), radio=True),
             )),
             pystray.MenuItem("STT device", pystray.Menu(
                 pystray.MenuItem("CPU (int8)", self._set_stt_device("cpu", "int8"),

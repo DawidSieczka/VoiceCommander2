@@ -71,7 +71,7 @@ def main() -> int:
     # runs in a worker subprocess; nothing here imports it.
     from speak_server import SpeakServer, write_hook_material
     from tts import PiperWorkerBackend, Player, Speaker, VoiceStore
-    speaker = Speaker(cfg, PiperWorkerBackend(VoiceStore()),
+    speaker = Speaker(cfg, PiperWorkerBackend(VoiceStore(cfgmod.models_dir(cfg) / "tts")),
                       Player(lambda: cfg.tts_output_device),
                       summarize=corrector.summarize,
                       corrector_available=lambda: corrector.available,
@@ -114,6 +114,7 @@ def main() -> int:
         injector.method = cfg.injection_method
         pipeline.reopen_mic()
         transcriber.reload_if_changed()
+        corrector.refresh()
         speaker.apply_config()
         if cfg.tts_enabled:
             _ensure_hook_material()

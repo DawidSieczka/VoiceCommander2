@@ -81,7 +81,7 @@ Open log
 Exit
 ```
 
-Ustawienia zapisywane w `%APPDATA%\VoiceCommander2\config.json` (zapis atomowy). Autostart przez klucz rejestru `HKCU\...\Run`. Zabezpieczenie przed drugą instancją (mutex).
+Model korekty wybiera się w tray z listy modeli zainstalowanych w **lokalnej** Ollamie (`GET /api/tags`, odświeżane co 5 s przy otwarciu menu) — na każdym komputerze widać jego własne modele; model z configu, którego nie ma na danej maszynie, jest pokazany jako "not installed here". Zmiana modelu budzi pętlę keep-alive korektora, więc status w menu (szary/aktywny) aktualizuje się w kilka sekund. Ustawienia zapisywane w `%APPDATA%\VoiceCommander2\config.json` (zapis atomowy). Autostart przez klucz rejestru `HKCU\...\Run`. Zabezpieczenie przed drugą instancją (mutex).
 
 ### 2.7 Przełączniki Performance (A/B)
 
@@ -116,9 +116,17 @@ Polityka kolejki: `latest` (nowa odpowiedź przerywa poprzednią, domyślnie) lu
 
 ## 3. Technologie
 
-### 3.1 Kluczowa decyzja: Whisper na CPU, LLM na GPU
+### 3.1 Kluczowa decyzja: podział GPU między Whisper i LLM
 
-Laptop ma **MX450 z zaledwie 2 GB VRAM**, a qwen3.5:2b zajmuje 2,7 GB — Ollama i tak podzieli go między GPU i CPU i **zajmie na stałe większość VRAM** (model trzymany "na ciepło"). Wniosek: **Whisper świadomie działa na CPU (int8)**. Próba wciśnięcia Whispera na GPU skończyłaby się albo brakiem pamięci, albo cichym spadkiem na CPU — dokładnie problemem nr 1 z v1. Rozdział zasobów jest deterministyczny: STT = CPU, LLM = GPU (częściowo). Flaga `stt_device` w configu pozwala eksperymentować.
+Pierwotny projekt zakładał laptop z **MX450 (2 GB VRAM)** i wymuszał Whisper na CPU. Obecna maszyna (pomiar 16.09.2026) to **RTX 3080 Laptop 8 GB VRAM, i7-12700H, 32 GB RAM** — Whisper `medium` (`int8_float16`) i LLM działają razem na GPU. Budżet jest jednak ciasny: Whisper `medium` + pulpit + przeglądarka zajmują ~4,5 GB, więc **dla LLM zostaje ~3,5 GB**. Model, który się w tym nie mieści, Ollama po cichu dzieli między GPU i CPU i korekta zwalnia kilkukrotnie (problem nr 1 z v1). Dlatego:
+
+- model korekty musi mieć **≤ ~3 GB w VRAM** po załadowaniu (`ollama ps` → `100% GPU`),
+- `ollama_num_gpu` w configu (`-1` = decyduje Ollama, `0` = wymuś CPU, `N` = liczba warstw na GPU) pozwala to sprawdzić i wymusić,
+- `tools/model_bench.py` mierzy latencję i jakość GPU vs CPU dla dowolnych modeli (patrz §5.3).
+
+Ta sama aplikacja (i ten sam `config.json`) jeździ między dwoma laptopami — RTX 3080 8 GB i MX450 2 GB — więc silnik STT jest wybierany **profilem z menu tray ("STT profile (per machine)")**: jeden klik ustawia model, urządzenie, typ obliczeń i `beam_size`, a model przeładowuje się w tle (stary obsługuje dyktowanie, aż nowy będzie gotów). Profile leżą w `stt_profiles` w configu i można je edytować; gdy ręcznie ustawione wartości nie pasują do żadnego, menu pokazuje "Custom". Domyślne: **RTX: large-v3-turbo / cuda / float16 / beam 5** (najlepsza polska fleksja i pojedyncze słowa), **RTX: medium / cuda / int8_float16 / beam 2** (dotychczasowe), **MX450: small / cpu / int8 / beam 2** (2 GB VRAM zostaje dla Ollamy). Na CPU large-v3-turbo nie ma sensu (RTF rzędu 0,5–1), na RTX zmierzone medium daje RTF 0,14 (mediana z 506 wypowiedzi, 16.09.2026).
+
+Zmierzone (16.09.2026, 47 zdań PL+EN, `Corrector.correct()`): na GPU każdy z testowanych modeli 2–5B poprawia zdanie w **0,6–0,9 s**; na samym CPU to **1,5–8 s** (qwen3.5:2b ~6 s, gemma4 e2b ~1,5–4 s). GPU jest więc obowiązkowe dla trybu per-sentence.
 
 ### 3.2 Stos technologiczny
 
@@ -212,7 +220,8 @@ Jeden proces, zwykłe wątki + `queue.Queue` (bez asyncio — wszystkie zależno
 Pełny tekst w `corrector.py` (`_SYSTEM_PL` / `_SYSTEM_EN`). Konstrukcja (po analizie logów 15.09.2026, ~40% korekt modelu 2B zawierało regresję):
 
 - **lista tego, co wolno** zmienić (literówki, interpunkcja, wielkie litery, zamknięta lista wypełniaczy "yyy/eee/mmm/hmm" i bezpośrednie powtórzenia) — zamiast otwartego "usuń wtrącenia", które wycinało "w takim razie" i całe człony zdań,
-- **lista tego, czego NIE wolno**: osoba/liczba/czas czasownika, synonimy, nazwy własne i żargon IT (skill, branch, commit, feature'y, Claude, low-poly…), słowa z apostrofem, liczby, wielokropki z granic chunków, liczba i kolejność zdań,
+- **lista tego, czego NIE wolno**: osoba/liczba/czas czasownika, synonimy, nazwy własne i żargon IT (skill, branch, commit, feature'y, Claude, low-poly…), słowa z apostrofem, liczby, liczba i kolejność zdań,
+- **znaki pauzy usuwane deterministycznie przed promptem** (`corrector.strip_pause_marks`, flaga `fix_pause_marks` w configu). Whisper zamyka segment na każdej pauzie w namyśle: wstawia "..." albo kropkę i zaczyna kolejne słowo wielką literą. Model 2B nie stosuje reguł o kropkach w żadną stronę (benchmark 16.09.2026), więc przypadki jednoznaczne naprawia kod: "..." w środku zdania → spacja, przed wielką literą → kropka, na końcu → usunięty; kropka + mała litera ("na stylistyce. i potem") → kropka usunięta, z wyjątkiem skrótów (np., m.in., tzn., ok.) i liczb. Kropka przed wielką literą jest usuwana tylko dla zamkniętej listy słów, które nie otwierają dyktowanego zdania (oraz, ani, albo, lub, ponieważ, gdyż, który/która/które…; EN: and, or, nor, which, whereas), np. "szablonu. Ani też" → "szablonu ani też". Reszta — "Zrób to. I to jest ważne", "Ale", "Bo", "But", "So" — zostaje decyzją modelu: prompt ma osobny punkt na liście dozwolonych zmian i przykład 4 (PL/EN), który pokazuje usunięcie kropki-pauzy przy zachowaniu kropki między dwoma pełnymi zdaniami. Obowiązuje też dla surowego transkryptu przy fallbacku.
 - **3 przykłady few-shot z realnej dziedziny** (polecenia do asystenta programisty), w tym: zachowana 2. osoba i zdrobnienie, pytanie z godzinami, wielokropek + skróty (MCP, GitHub). Przykład ze zmianą liczby ("dwa jabłka yyy znaczy trzy" → "trzy") usunięty — uczył model redagowania treści wbrew regule "nie zmieniaj liczb".
 
 Wywołanie: `POST /api/chat`, `stream=false`, `think=false`, `keep_alive="30m"`, `num_predict = max(80, 3 × liczba słów)` z fallbackiem przy `done_reason="length"`. Opcje próbkowania: `temperature=0`, **`presence_penalty=0`, `frequency_penalty=0`, `repeat_penalty=1.0`** — karta modelu qwen3.5 w Ollamie ma domyślnie `presence_penalty=1.5`, a Ollama dokłada `repeat_penalty=1.1`; obie kary penalizują tokeny już obecne w kontekście, czyli dosłownie przepisywanie wejścia, i były główną przyczyną parafraz ("żebyś"→"abyś", "ignorujemy"→"ignoruję", ucinanie zdań). Warm-up przy starcie. Oczekiwana latencja: **1–3 s na zdanie**.
@@ -220,6 +229,8 @@ Wywołanie: `POST /api/chat`, `stream=false`, `think=false`, `keep_alive="30m"`,
 **Kontrola jakości odpowiedzi** (`corrector.sanity_check`, na słowach po odfiltrowaniu wypełniaczy): odrzuć korektę i wpisz surowy transkrypt, gdy liczba słów spadła poniżej 75% lub wzrosła powyżej 150%, gdy zniknęła liczba lub słowo z apostrofem, albo gdy zmieniono więcej niż 25% słów wejścia (min. 2). Obcinanie obejmujących cudzysłowów i echa znaczników.
 
 **Zestaw odporności**: `tools/correction_eval.py` — 15 surowych transkryptów z logów (pytanie, polecenie "git push", żargon, wielokropki) przez `Corrector.correct()` na żywej Ollamie; każdy przypadek ma chroniony fragment, który musi przetrwać. Uruchamiać po każdej zmianie promptu lub opcji.
+
+**Benchmark modeli**: `tools/model_bench.py <model> [<model>...]` — te same 15 zdań + 20 kolejnych z logów + 12 zdań EN, dla każdego modelu raz z domyślnym umieszczeniem (GPU) i raz z `num_gpu=0` (CPU). Raportuje medianę/p90/max latencji, liczbę fallbacków sanity-check, zachowane fragmenty chronione i niezmienione wyjścia; pełne wyjścia trafiają do `specs/bench/bench_<data>.md` do przeglądu ręcznego. Wyniki z 16.09.2026 i uzasadnienie wyboru modelu: `specs/bench/README.md`.
 
 ---
 

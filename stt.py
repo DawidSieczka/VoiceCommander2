@@ -10,7 +10,8 @@ from typing import Optional
 
 import numpy as np
 
-from config import APPDATA_DIR, AppConfig, MODELS_DIR
+import config as cfgmod
+from config import APPDATA_DIR, AppConfig
 
 log = logging.getLogger("stt")
 
@@ -92,7 +93,7 @@ class Transcriber:
 
         cpu_threads = max(4, (os.cpu_count() or 4) - 2)
         kwargs = dict(device=device, compute_type=compute_type,
-                      cpu_threads=cpu_threads, download_root=str(MODELS_DIR))
+                      cpu_threads=cpu_threads, download_root=str(cfgmod.models_dir(self._cfg)))
         try:
             # Fully offline when the model is already cached (nothing leaves the laptop).
             return WhisperModel(self._cfg.stt_model, local_files_only=True, **kwargs)
@@ -109,7 +110,7 @@ class Transcriber:
         try:
             t0 = time.perf_counter()
             requested_key = self._cfg_key()
-            MODELS_DIR.mkdir(parents=True, exist_ok=True)
+            cfgmod.models_dir(self._cfg).mkdir(parents=True, exist_ok=True)
             device, compute = self._cfg.stt_device, self._cfg.stt_compute_type
             if device == "cuda":
                 self._add_cuda_dll_dirs()

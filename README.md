@@ -31,7 +31,7 @@ Model Whisper `small` (~460 MB) pobiera się automatycznie do `%LOCALAPPDATA%\Vo
 
 ## Konfiguracja
 
-`%APPDATA%\VoiceCommander2\config.json` — m.in. `stt_model` (`base`/`small`/`medium`/`large-v3-turbo`), progi VAD, timeouty korekty, `injection_method` (`clipboard`/`sendinput`). Logi: `%APPDATA%\VoiceCommander2\logs`.
+`%APPDATA%\VoiceCommander2\config.json` — m.in. `stt_model` (`base`/`small`/`medium`/`large-v3-turbo`), progi VAD, timeouty korekty, `injection_method` (`clipboard`/`sendinput`), `ollama_model` (nazwa modelu w Ollamie; w tray: "Correction model" pokazuje modele zainstalowane lokalnie), `fix_pause_marks` (usuwanie znaków pauzy Whispera przed korektą: wielokropków i kropek przed małą literą; kropki przed wielką literą ocenia model, domyślnie włączone), `ollama_num_gpu` (`-1` = Ollama decyduje, `0` = korekta na CPU) `stt_profiles` (nazwane zestawy model/urządzenie/typ obliczeń/beam dla różnych komputerów — przełączane w menu tray "STT profile") oraz `models_dir` (katalog modeli Whisper/TTS; ustaw krótką ścieżkę, np. `D:\VoiceCommander2\models`, gdy Python ze Sklepu przekierowuje `%LOCALAPPDATA%` do `...\Packages\...\LocalCache` — wtedy ścieżka pliku tymczasowego `model.bin` przekracza 260 znaków i pobieranie kończy się `FileNotFoundError`). Logi: `%APPDATA%\VoiceCommander2\logs`.
 
 ## Czytanie odpowiedzi Claude Code (TTS)
 
